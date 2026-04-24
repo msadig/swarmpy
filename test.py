@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -131,6 +132,18 @@ class SwarmPyTests(unittest.TestCase):
 
                 log_path = self.run_swarmpy("logs", "--path", "-p", str(project), "-w", "ops")
                 self.assertEqual(Path(log_path.stdout.strip()).resolve(), log_file.resolve())
+
+                pane_path = self.run_swarmpy("logs", "--pane", "logger", "--path", "-p", str(project), "-w", "ops")
+                pane_log_file = project / "logs" / "ops" / "panes" / "logger.log"
+                self.assertEqual(Path(pane_path.stdout.strip()).resolve(), pane_log_file.resolve())
+
+                time.sleep(0.2)
+                pane_logs = self.run_swarmpy("logs", "--pane", "logger", "-n", "20", "-p", str(project), "-w", "ops")
+                self.assertTrue(pane_log_file.is_file())
+                self.assertIn("hello ops", pane_logs.stdout)
+
+                all_pane_paths = self.run_swarmpy("logs", "--all-panes", "--path", "-p", str(project), "-w", "ops")
+                self.assertIn(str((project / "logs" / "ops" / "panes" / "logger.log").resolve()), str(Path(all_pane_paths.stdout.splitlines()[0]).resolve()))
             finally:
                 subprocess.run(
                     [sys.executable, str(SWARM), "cleanup", "-p", str(project), "-w", "ops"],

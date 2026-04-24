@@ -439,14 +439,28 @@ def first_pane_target(session: str) -> str:
     return pane_id
 
 
-def create_workflow_session(configs: list[WindowConfig]) -> None:
+def pane_log_path(paths: ProjectPaths, role: str) -> Path:
+    return paths.logs_dir / "panes" / f"{role}.log"
+
+
+def start_pane_logging(paths: ProjectPaths, config: WindowConfig) -> None:
+    log_file = pane_log_path(paths, config.role)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.touch(exist_ok=True)
+    target = f"{config.session}:{config.window}"
+    tmux("pipe-pane", "-o", "-t", target, f"cat >> {q(log_file)}")
+
+
+def create_workflow_session(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
     first = configs[0]
     tmux("new-session", "-d", "-s", first.session, "-n", first.window)
     tmux("set-window-option", "-t", f"{first.session}:{first.window}", "allow-rename", "off")
+    start_pane_logging(paths, first)
 
     for config in configs[1:]:
         tmux("new-window", "-t", config.session, "-n", config.window)
         tmux("set-window-option", "-t", f"{config.session}:{config.window}", "allow-rename", "off")
+        start_pane_logging(paths, config)
 
 
 def write_agent_instruction_file(paths: ProjectPaths, role: str) -> Path:
@@ -559,7 +573,7 @@ def launch(working_dir_arg: str, workflow: str = "default") -> None:
 
     print_banner()
     print(f"{GREEN}Launching SwarmPy workflow tmux session...{RESET}")
-    create_workflow_session(configs)
+    create_workflow_session(paths, configs)
 
     print(f"{GREEN}Starting agents...{RESET}")
     for config in configs:
@@ -661,22 +675,42 @@ def cmd_log(args: argparse.Namespace) -> None:
     print(f"[{args.role}] {message}")
 
 
+def print_last_lines(log_file: Path, count: int) -> None:
+    lines = log_file.read_text(errors="replace").splitlines()
+    for line in lines[-count:]:
+        print(line)
+
+
 def cmd_logs(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
-    log_file = paths.logs_dir / "agent_messages.log"
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    log_file.touch(exist_ok=True)
+
+    if args.all_panes:
+        rows = read_sessions(paths.sessions_file)
+        log_files = [pane_log_path(paths, row.role) for row in rows]
+    elif args.pane:
+        rows = read_sessions(paths.sessions_file)
+        target = resolve_target(rows, args.pane)
+        log_files = [pane_log_path(paths, target.role)]
+    else:
+        log_files = [paths.logs_dir / "agent_messages.log"]
+
+    for log_file in log_files:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_file.touch(exist_ok=True)
 
     if args.path:
-        print(log_file)
+        for log_file in log_files:
+            print(log_file)
         return
 
     if args.follow:
-        os.execvp("tail", ["tail", "-n", str(args.lines), "-f", str(log_file)])
+        os.execvp("tail", ["tail", "-n", str(args.lines), "-f", *[str(path) for path in log_files]])
 
-    lines = log_file.read_text().splitlines()
-    for line in lines[-args.lines :]:
-        print(line)
+    multiple = len(log_files) > 1
+    for log_file in log_files:
+        if multiple:
+            print(f"==> {log_file} <==")
+        print_last_lines(log_file, args.lines)
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
@@ -793,12 +827,15 @@ examples:
     log_parser.add_argument("role", help="actor name to write in the log")
     log_parser.add_argument("message", nargs="+", help="message to log")
 
-    logs_parser = subparsers.add_parser("logs", help="show or follow logs/<workflow>/agent_messages.log")
+    logs_parser = subparsers.add_parser("logs", help="show or follow workflow message logs or raw tmux pane logs")
     add_project_arg(logs_parser)
     add_workflow_arg(logs_parser)
     logs_parser.add_argument("-n", "--lines", type=int, default=80, help="number of lines to show before exiting/following, default: 80")
     logs_parser.add_argument("-f", "--follow", action="store_true", help="follow the log like tail -f")
     logs_parser.add_argument("--path", action="store_true", help="print the log file path and exit")
+    pane_group = logs_parser.add_mutually_exclusive_group()
+    pane_group.add_argument("--pane", metavar="ROLE", help="show/follow raw tmux output for one role/window")
+    pane_group.add_argument("--all-panes", action="store_true", help="show/follow raw tmux output for all role windows")
 
     sessions_parser = subparsers.add_parser("sessions", help="list configured sessions and running status")
     add_project_arg(sessions_parser)

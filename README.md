@@ -267,10 +267,28 @@ Show recent workflow logs:
 swarmpy logs -p /path/to/project -w development
 ```
 
-Follow workflow logs:
+Follow workflow message logs:
 
 ```bash
 swarmpy logs -f -p /path/to/project -w development
+```
+
+Show raw tmux output for one agent/window:
+
+```bash
+swarmpy logs --pane coder -p /path/to/project -w development
+```
+
+Follow raw tmux output for one agent/window:
+
+```bash
+swarmpy logs --pane coder -f -p /path/to/project -w development
+```
+
+Follow raw tmux output for every agent/window in the workflow:
+
+```bash
+swarmpy logs --all-panes -f -p /path/to/project -w development
 ```
 
 Show the log file path:
