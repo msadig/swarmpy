@@ -90,6 +90,7 @@ uv run --script swarm.py cleanup --help
 Commands:
 
 ```text
+init      create swarmforge config and role prompt scaffolding
 launch    start the configured swarm
 notify    send a message to a role, index, or tmux session
 log       append a message to logs/agent_messages.log
@@ -97,6 +98,24 @@ sessions  list configured sessions and running status
 attach    attach to a role, index, or tmux session
 cleanup   kill swarm tmux sessions
 ```
+
+Create the project wiring/scaffolding:
+
+```bash
+uv run --script swarm.py init /path/to/project
+```
+
+This creates:
+
+```text
+swarmforge/swarmforge.conf
+swarmforge/constitution.prompt
+swarmforge/architect.prompt
+swarmforge/coder.prompt
+swarmforge/reviewer.prompt
+```
+
+It also initializes git for a new project and adds SwarmPy runtime paths to `.gitignore`.
 
 Launch:
 

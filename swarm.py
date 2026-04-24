@@ -128,6 +128,98 @@ def initialize_git_repo(working_dir: Path) -> None:
     run(["git", "-C", str(working_dir), "commit", "-m", "Initial swarmforge repository"], stdout=subprocess.DEVNULL)
 
 
+def write_scaffold_file(path: Path, content: str, force: bool) -> bool:
+    if path.exists() and not force:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return True
+
+
+def init_project(working_dir_arg: str, force: bool = False) -> None:
+    working_dir = Path(working_dir_arg).expanduser().resolve()
+    working_dir.mkdir(parents=True, exist_ok=True)
+    paths = paths_for(working_dir)
+
+    files = {
+        paths.config_file: """# SwarmPy config. Format: window <role> <agent> <worktree>
+# Agents: claude, codex, none
+# Worktree: master runs in the main checkout; none creates no worktree; any other name creates .worktrees/<name>.
+window architect claude master
+window coder codex coder
+window reviewer codex reviewer
+window logger none none
+""",
+        paths.constitution_file: """# Constitution
+
+Every agent must follow these rules:
+
+1. Read this file first.
+2. Read your role prompt in `swarmforge/<role>.prompt`.
+3. Make small, reviewable changes.
+4. Keep tests, linting, and project checks green.
+5. Communicate through `swarm.py notify <role-or-index> "message"` and `swarm.py log <role> "message"`.
+
+Project-specific rules belong here. Keep them short and explicit.
+""",
+        paths.swarmforge_dir / "architect.prompt": """# Architect
+
+You own planning and task breakdown.
+
+- Clarify intent before implementation.
+- Split work into small slices.
+- Notify coder with the next concrete task.
+- Notify reviewer when a slice is ready for review.
+""",
+        paths.swarmforge_dir / "coder.prompt": """# Coder
+
+You implement one small slice at a time.
+
+- Read the constitution and this prompt before acting.
+- Keep changes focused.
+- Run relevant tests/checks.
+- Notify reviewer when implementation is ready.
+""",
+        paths.swarmforge_dir / "reviewer.prompt": """# Reviewer
+
+You verify quality and correctness.
+
+- Review diffs carefully.
+- Run relevant tests/checks.
+- Ask coder for fixes when needed.
+- Notify architect when the slice is accepted or blocked.
+""",
+    }
+
+    created = []
+    skipped = []
+    for path, content in files.items():
+        if write_scaffold_file(path, content, force):
+            created.append(path)
+        else:
+            skipped.append(path)
+
+    if (working_dir / ".git").exists():
+        ensure_gitignore(working_dir)
+    else:
+        check_dependency("git")
+        initialize_git_repo(working_dir)
+
+    print(f"{GREEN}SwarmPy project initialized:{RESET} {working_dir}")
+    if created:
+        print("Created:")
+        for path in created:
+            print(f"  {path.relative_to(working_dir)}")
+    if skipped:
+        print("Skipped existing files, use --force to overwrite:")
+        for path in skipped:
+            print(f"  {path.relative_to(working_dir)}")
+    print()
+    print("Next steps:")
+    print(f"  1. Edit {paths.config_file.relative_to(working_dir)} and prompt files as needed")
+    print(f"  2. Start the swarm: uv run --script {paths.script_path} launch {working_dir}")
+
+
 def display_name_for_role(role: str) -> str:
     return " ".join(part.capitalize() for part in role.replace("-", " ").replace("_", " ").split())
 
@@ -495,7 +587,7 @@ def add_project_arg(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     examples = """
 examples:
-  swarm.py .
+  swarm.py init ~/code/my-project
   swarm.py launch ~/code/my-project
   swarm.py sessions -p ~/code/my-project
   swarm.py attach coder -p ~/code/my-project
@@ -512,6 +604,10 @@ examples:
     parser.set_defaults(command="launch")
 
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    init_parser = subparsers.add_parser("init", help="create swarmforge config and role prompt scaffolding")
+    init_parser.add_argument("working_dir", nargs="?", default=os.getcwd(), help="project directory, default: current directory")
+    init_parser.add_argument("--force", action="store_true", help="overwrite existing scaffold files")
 
     launch_parser = subparsers.add_parser("launch", help="start the configured swarm")
     launch_parser.add_argument("working_dir", nargs="?", default=os.getcwd(), help="project directory, default: current directory")
@@ -549,14 +645,16 @@ def main(argv: list[str] | None = None) -> None:
     if argv and argv[0] == "help":
         argv = ["--help"] if len(argv) == 1 else [argv[1], "--help"]
 
-    commands = {"launch", "notify", "log", "sessions", "attach", "cleanup"}
+    commands = {"init", "launch", "notify", "log", "sessions", "attach", "cleanup"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         argv = ["launch", *argv]
 
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "launch":
+    if args.command == "init":
+        init_project(args.working_dir, args.force)
+    elif args.command == "launch":
         launch(args.working_dir if hasattr(args, "working_dir") else os.getcwd())
     elif args.command == "notify":
         cmd_notify(args)
