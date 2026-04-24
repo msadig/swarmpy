@@ -72,36 +72,74 @@ Worktree behavior:
 - `none` uses the main working directory and creates no worktree
 - any other value creates `.worktrees/<name>` on branch `swarmforge-<name>`
 
-## Commands
+## CLI
+
+Show top-level help:
+
+```bash
+uv run --script swarm.py --help
+```
+
+Show help for a command:
+
+```bash
+uv run --script swarm.py help notify
+uv run --script swarm.py cleanup --help
+```
+
+Commands:
+
+```text
+launch    start the configured swarm
+notify    send a message to a role, index, or tmux session
+log       append a message to logs/agent_messages.log
+sessions  list configured sessions and running status
+attach    attach to a role, index, or tmux session
+cleanup   kill swarm tmux sessions
+```
 
 Launch:
 
 ```bash
 uv run --script swarm.py /path/to/project
+# or
+uv run --script swarm.py launch /path/to/project
+```
+
+List sessions:
+
+```bash
+uv run --script swarm.py sessions -p /path/to/project
+```
+
+Attach to a role:
+
+```bash
+uv run --script swarm.py attach coder -p /path/to/project
 ```
 
 Notify an agent:
 
 ```bash
-uv run --script swarm.py notify coder "Please implement the next slice."
+uv run --script swarm.py notify coder "Please implement the next slice." -p /path/to/project
 ```
 
 Append to swarm log:
 
 ```bash
-uv run --script swarm.py log reviewer "Review started."
+uv run --script swarm.py log reviewer "Review started." -p /path/to/project
 ```
 
-Cleanup sessions:
+Cleanup all sessions for a project:
+
+```bash
+uv run --script swarm.py cleanup -p /path/to/project
+```
+
+Cleanup explicit sessions:
 
 ```bash
 uv run --script swarm.py cleanup swarmforge-architect swarmforge-coder swarmforge-reviewer
-```
-
-Attach manually:
-
-```bash
-tmux attach-session -t swarmforge-coder
 ```
 
 ## Runtime files in the managed project

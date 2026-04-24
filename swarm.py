@@ -16,6 +16,7 @@ Agent helper commands:
 
 from __future__ import annotations
 
+import argparse
 import os
 import shlex
 import shutil
@@ -410,31 +411,35 @@ def read_sessions(sessions_file: Path) -> list[tuple[str, str, str, str, str]]:
     return rows
 
 
-def notify(args: list[str]) -> None:
-    if len(args) < 2:
-        print('Usage: swarm.py notify <target-role-or-index> "message"', file=sys.stderr)
-        raise SystemExit(1)
+def resolve_project_dir(project: str | None) -> Path:
+    if project:
+        return Path(project).expanduser().resolve()
+    return project_dir_from_context()
 
-    project_dir = project_dir_from_context()
-    sessions_file = project_dir / ".swarmforge" / "sessions.tsv"
-    rows = read_sessions(sessions_file)
 
-    target = args[0].lower()
-    target_session: str | None = None
+def resolve_session(rows: list[tuple[str, str, str, str, str]], target: str) -> str:
+    normalized = target.lower()
     for index, role, session, _display, _agent in rows:
-        if target in {index.lower(), role.lower()}:
-            target_session = session
-            break
+        if normalized in {index.lower(), role.lower(), session.lower()}:
+            return session
+    fail(f"Unknown target: {target}")
 
-    if target_session is None:
-        fail(f"Unknown target: {args[0]}")
 
-    message = " ".join(args[1:])
+def append_log(project_dir: Path, actor: str, message: str) -> None:
     log_file = project_dir / "logs" / "agent_messages.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with log_file.open("a") as f:
-        f.write(f"[{timestamp}] [{target_session}] {message}\n")
+        f.write(f"[{timestamp}] [{actor}] {message}\n")
+
+
+def cmd_notify(args: argparse.Namespace) -> None:
+    project_dir = resolve_project_dir(args.project)
+    rows = read_sessions(project_dir / ".swarmforge" / "sessions.tsv")
+    target_session = resolve_session(rows, args.target)
+    message = " ".join(args.message)
+
+    append_log(project_dir, target_session, message)
 
     pane_target = first_pane_target(target_session)
     tmux("send-keys", "-t", pane_target, "-l", "--", message)
@@ -444,75 +449,127 @@ def notify(args: list[str]) -> None:
     tmux("send-keys", "-t", pane_target, "C-j")
 
 
-def log_message(args: list[str]) -> None:
-    if len(args) < 2:
-        print('Usage: swarm.py log <role> "message"', file=sys.stderr)
-        raise SystemExit(1)
-
-    project_dir = project_dir_from_context()
-    log_file = project_dir / "logs" / "agent_messages.log"
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    message = " ".join(args[1:])
-    with log_file.open("a") as f:
-        f.write(f"[{timestamp}] [{args[0]}] {message}\n")
-    print(f"[{args[0]}] {message}")
+def cmd_log(args: argparse.Namespace) -> None:
+    project_dir = resolve_project_dir(args.project)
+    message = " ".join(args.message)
+    append_log(project_dir, args.role, message)
+    print(f"[{args.role}] {message}")
 
 
-def cleanup(args: list[str]) -> None:
-    if not args:
-        print("Usage: swarm.py cleanup <session> [session ...]", file=sys.stderr)
-        raise SystemExit(1)
+def cmd_sessions(args: argparse.Namespace) -> None:
+    project_dir = resolve_project_dir(args.project)
+    rows = read_sessions(project_dir / ".swarmforge" / "sessions.tsv")
+    print(f"Swarm sessions for {project_dir}:")
+    for index, role, session, display, agent in rows:
+        marker = "running" if tmux_has_session(session) else "stopped"
+        print(f"  {index}. {role:<16} {session:<24} {agent:<6} {marker}  ({display})")
 
-    for session in args:
+
+def cmd_attach(args: argparse.Namespace) -> None:
+    project_dir = resolve_project_dir(args.project)
+    rows = read_sessions(project_dir / ".swarmforge" / "sessions.tsv")
+    session = resolve_session(rows, args.target)
+    os.execvp("tmux", ["tmux", "attach-session", "-t", session])
+
+
+def cmd_cleanup(args: argparse.Namespace) -> None:
+    sessions = args.sessions
+    if not sessions:
+        project_dir = resolve_project_dir(args.project)
+        rows = read_sessions(project_dir / ".swarmforge" / "sessions.tsv")
+        sessions = [session for _index, _role, session, _display, _agent in rows]
+
+    for session in sessions:
         tmux("kill-session", "-t", session, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def parse_top_level(argv: list[str]) -> tuple[str, list[str]]:
-    # Keep launch ergonomic: `swarm.py /project` instead of requiring `launch`.
-    if not argv:
-        return "launch", [os.getcwd()]
-
-    command = argv[0]
-    if command in {"launch", "notify", "log", "cleanup"}:
-        return command, argv[1:]
-
-    return "launch", argv
-
-
-def print_usage() -> None:
-    print(
-        "Usage:\n"
-        "  swarm.py [WORKING_DIR]              launch swarm, default: current directory\n"
-        "  swarm.py launch [WORKING_DIR]       same as above\n"
-        "  swarm.py notify <target> <message>  send message to role or index\n"
-        "  swarm.py log <role> <message>       append to logs/agent_messages.log\n"
-        "  swarm.py cleanup <session...>       kill tmux sessions\n\n"
-        "Project config is read from WORKING_DIR/swarmforge/swarmforge.conf.\n"
-        "No shell helper scripts are generated; use swarm.py subcommands."
+def add_project_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-p",
+        "--project",
+        metavar="DIR",
+        help="project directory; defaults to $SWARMFORGE_PROJECT_DIR or current directory",
     )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    examples = """
+examples:
+  swarm.py .
+  swarm.py launch ~/code/my-project
+  swarm.py sessions -p ~/code/my-project
+  swarm.py attach coder -p ~/code/my-project
+  swarm.py notify reviewer "Please review the latest changes" -p ~/code/my-project
+  swarm.py log architect "Plan updated" -p ~/code/my-project
+  swarm.py cleanup -p ~/code/my-project
+"""
+    parser = argparse.ArgumentParser(
+        prog="swarm.py",
+        description="Single-file Python/uv SwarmForge runner using tmux sessions and git worktrees.",
+        epilog=examples,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.set_defaults(command="launch")
+
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    launch_parser = subparsers.add_parser("launch", help="start the configured swarm")
+    launch_parser.add_argument("working_dir", nargs="?", default=os.getcwd(), help="project directory, default: current directory")
+
+    notify_parser = subparsers.add_parser("notify", help="send a message to a role, index, or tmux session")
+    add_project_arg(notify_parser)
+    notify_parser.add_argument("target", help="role name, session index, or tmux session name")
+    notify_parser.add_argument("message", nargs="+", help="message to type into the target tmux pane")
+
+    log_parser = subparsers.add_parser("log", help="append a message to logs/agent_messages.log")
+    add_project_arg(log_parser)
+    log_parser.add_argument("role", help="actor name to write in the log")
+    log_parser.add_argument("message", nargs="+", help="message to log")
+
+    sessions_parser = subparsers.add_parser("sessions", help="list configured sessions and running status")
+    add_project_arg(sessions_parser)
+
+    attach_parser = subparsers.add_parser("attach", help="attach to a role, index, or tmux session")
+    add_project_arg(attach_parser)
+    attach_parser.add_argument("target", help="role name, session index, or tmux session name")
+
+    cleanup_parser = subparsers.add_parser("cleanup", help="kill swarm tmux sessions")
+    add_project_arg(cleanup_parser)
+    cleanup_parser.add_argument("sessions", nargs="*", help="session names; if omitted, read from the project sessions file")
+
+    return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] in {"-h", "--help", "help"}:
-        print_usage()
-        return
 
-    command, args = parse_top_level(argv)
-    if command == "launch":
-        if len(args) > 1:
-            print("Usage: swarm.py [WORKING_DIR]", file=sys.stderr)
-            raise SystemExit(1)
-        launch(args[0] if args else os.getcwd())
-    elif command == "notify":
-        notify(args)
-    elif command == "log":
-        log_message(args)
-    elif command == "cleanup":
-        cleanup(args)
+    # Friendly shortcuts:
+    #   swarm.py /project       -> swarm.py launch /project
+    #   swarm.py help notify    -> swarm.py notify --help
+    if argv and argv[0] == "help":
+        argv = ["--help"] if len(argv) == 1 else [argv[1], "--help"]
+
+    commands = {"launch", "notify", "log", "sessions", "attach", "cleanup"}
+    if argv and argv[0] not in commands and not argv[0].startswith("-"):
+        argv = ["launch", *argv]
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "launch":
+        launch(args.working_dir if hasattr(args, "working_dir") else os.getcwd())
+    elif args.command == "notify":
+        cmd_notify(args)
+    elif args.command == "log":
+        cmd_log(args)
+    elif args.command == "sessions":
+        cmd_sessions(args)
+    elif args.command == "attach":
+        cmd_attach(args)
+    elif args.command == "cleanup":
+        cmd_cleanup(args)
     else:
-        fail(f"Unknown command: {command}")
+        parser.print_help()
 
 
 if __name__ == "__main__":
