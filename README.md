@@ -8,7 +8,9 @@ The goal is intentionally boring:
 - one global command: `swarmpy`
 - no shell helper scripts
 - no Terminal.app / `osascript`
-- only `tmux` sessions/windows and git worktrees
+- one `tmux` session per workflow
+- one `tmux` window per agent role
+- git worktrees when configured
 - multiple workflows per project
 - simple config-driven agent launch
 
@@ -53,7 +55,24 @@ uv run --script swarm.py [COMMAND]
 
 ## Workflows
 
-A project can have many workflows. Each workflow has its own config, role prompts, settings, tmux sessions, worktrees, logs, and agent context.
+A project can have many workflows. Each workflow has its own config, role prompts, settings, tmux session, tmux windows, worktrees, logs, and agent context.
+
+Tmux grouping is workflow-first:
+
+```text
+swarmpy-development          # tmux session
+  architect                  # tmux window
+  coder                      # tmux window
+  reviewer                   # tmux window
+  logger                     # tmux window
+
+swarmpy-seo                  # tmux session
+  collector                  # tmux window
+  analyst                    # tmux window
+  writer                     # tmux window
+  reviewer                   # tmux window
+  logger                     # tmux window
+```
 
 Default workflow layout:
 
@@ -188,9 +207,9 @@ init       create workflow config and role prompt scaffolding
 launch     start the configured workflow
 workflows  list workflows configured in a project
 sessions   list configured sessions and running status
-notify     send a message to a role, index, or tmux session
+notify     send a message to a role, index, or tmux target
 log        append a message to logs/<workflow>/agent_messages.log
-attach     attach to a role, index, or tmux session
+attach     attach to a workflow session and select a role window
 cleanup    kill workflow tmux sessions
 ```
 
@@ -250,7 +269,7 @@ swarmpy cleanup -p /path/to/project -w development
 Cleanup explicit sessions:
 
 ```bash
-swarmpy cleanup swarmpy-development-architect swarmpy-development-coder swarmpy-development-reviewer
+swarmpy cleanup swarmpy-development
 ```
 
 ## Tests

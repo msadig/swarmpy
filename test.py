@@ -98,20 +98,30 @@ class SwarmPyTests(unittest.TestCase):
             self.run_swarmpy("init", str(project), "-w", "ops")
 
             workflow_dir = project / "swarmforge" / "workflows" / "ops"
-            (workflow_dir / "swarmforge.conf").write_text("window logger none none\n")
+            (workflow_dir / "swarmforge.conf").write_text("window logger none none\nwindow observer none none\n")
 
             try:
                 self.run_swarmpy("launch", str(project), "-w", "ops")
                 sessions = self.run_swarmpy("sessions", "-p", str(project), "-w", "ops")
-                self.assertIn("swarmpy-ops-logger", sessions.stdout)
+                self.assertIn("swarmpy-ops:logger", sessions.stdout)
+                self.assertIn("swarmpy-ops:observer", sessions.stdout)
                 self.assertIn("running", sessions.stdout)
+
+                tmux_sessions = subprocess.run(
+                    ["tmux", "list-sessions", "-F", "#{session_name}: #{session_windows}"],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True,
+                )
+                self.assertIn("swarmpy-ops: 2", tmux_sessions.stdout)
 
                 self.run_swarmpy("notify", "logger", "hello", "ops", "-p", str(project), "-w", "ops")
                 self.run_swarmpy("log", "tester", "log", "entry", "-p", str(project), "-w", "ops")
 
                 log_file = project / "logs" / "ops" / "agent_messages.log"
                 log_text = log_file.read_text()
-                self.assertIn("[swarmpy-ops-logger] hello ops", log_text)
+                self.assertIn("[swarmpy-ops:logger] hello ops", log_text)
                 self.assertIn("[tester] log entry", log_text)
             finally:
                 subprocess.run(

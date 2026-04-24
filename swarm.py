@@ -26,8 +26,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-SESSION_PREFIX = "swarmforge"
-AGENT_WINDOW = "swarm"
 SUPPORTED_AGENTS = {"claude", "codex", "none"}
 
 RED = "\033[0;31m"
@@ -45,8 +43,23 @@ class WindowConfig:
     agent: str
     worktree_name: str
     session: str
+    window: str
     display: str
     worktree_path: Path
+
+
+@dataclass(frozen=True)
+class SessionRow:
+    index: str
+    role: str
+    session: str
+    window: str
+    display: str
+    agent: str
+
+    @property
+    def target(self) -> str:
+        return f"{self.session}:{self.window}"
 
 
 @dataclass(frozen=True)
@@ -296,8 +309,8 @@ def display_name_for_role(role: str) -> str:
     return " ".join(part.capitalize() for part in role.replace("-", " ").replace("_", " ").split())
 
 
-def session_name_for_role(workflow: str, role: str) -> str:
-    return f"swarmpy-{workflow}-{role}"
+def session_name_for_workflow(workflow: str) -> str:
+    return f"swarmpy-{workflow}"
 
 
 def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
@@ -348,7 +361,8 @@ def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
                 role=role,
                 agent=agent,
                 worktree_name=worktree_name,
-                session=session_name_for_role(paths.workflow, role),
+                session=session_name_for_workflow(paths.workflow),
+                window=role,
                 display=display_name_for_role(role),
                 worktree_path=worktree_path,
             )
@@ -360,7 +374,7 @@ def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
 
 
 def write_sessions_file(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
-    lines = [f"{c.index}\t{c.role}\t{c.session}\t{c.display}\t{c.agent}" for c in configs]
+    lines = [f"{c.index}\t{c.role}\t{c.session}\t{c.window}\t{c.display}\t{c.agent}" for c in configs]
     paths.sessions_file.write_text("\n".join(lines) + "\n")
 
 
@@ -425,10 +439,14 @@ def first_pane_target(session: str) -> str:
     return pane_id
 
 
-def create_role_session(config: WindowConfig) -> None:
-    tmux("new-session", "-d", "-s", config.session, "-n", AGENT_WINDOW)
-    tmux("rename-window", "-t", f"{config.session}:{AGENT_WINDOW}", config.display)
-    tmux("set-window-option", "-t", f"{config.session}:{config.display}", "allow-rename", "off")
+def create_workflow_session(configs: list[WindowConfig]) -> None:
+    first = configs[0]
+    tmux("new-session", "-d", "-s", first.session, "-n", first.window)
+    tmux("set-window-option", "-t", f"{first.session}:{first.window}", "allow-rename", "off")
+
+    for config in configs[1:]:
+        tmux("new-window", "-t", config.session, "-n", config.window)
+        tmux("set-window-option", "-t", f"{config.session}:{config.window}", "allow-rename", "off")
 
 
 def write_agent_instruction_file(paths: ProjectPaths, role: str) -> Path:
@@ -471,7 +489,7 @@ def choose_cleanup_owner(configs: list[WindowConfig]) -> int | None:
 def launch_role(paths: ProjectPaths, configs: list[WindowConfig], config: WindowConfig, cleanup_owner: int | None) -> None:
     # Target the actual pane id so user tmux base-index/pane-base-index settings
     # cannot break startup.
-    target = first_pane_target(config.session)
+    target = first_pane_target(f"{config.session}:{config.window}")
 
     if config.agent == "none":
         if config.role == "logger":
@@ -500,7 +518,7 @@ def launch_role(paths: ProjectPaths, configs: list[WindowConfig], config: Window
         fail(f"Unsupported agent '{config.agent}' for role '{config.role}'")
 
     if cleanup_owner == config.index:
-        cleanup_cmd = f"{script_command(paths)} cleanup " + " ".join(q(c.session) for c in configs)
+        cleanup_cmd = f"{script_command(paths)} cleanup " + q(config.session)
         command = f"{command}; exit_code=$?; nohup {cleanup_cmd} >/dev/null 2>&1 & exit $exit_code"
 
     tmux("send-keys", "-t", target, command, "Enter")
@@ -534,15 +552,14 @@ def launch(working_dir_arg: str, workflow: str = "default") -> None:
     prepare_worktrees(paths, configs)
     cleanup_owner = choose_cleanup_owner(configs)
 
-    for config in configs:
-        if tmux_has_session(config.session):
-            print(f"{YELLOW}Existing SwarmForge session found: {config.session}. Killing it...{RESET}")
-            tmux("kill-session", "-t", config.session, check=False)
+    workflow_session = configs[0].session
+    if tmux_has_session(workflow_session):
+        print(f"{YELLOW}Existing SwarmPy workflow session found: {workflow_session}. Killing it...{RESET}")
+        tmux("kill-session", "-t", workflow_session, check=False)
 
     print_banner()
-    print(f"{GREEN}Launching SwarmForge tmux sessions...{RESET}")
-    for config in configs:
-        create_role_session(config)
+    print(f"{GREEN}Launching SwarmPy workflow tmux session...{RESET}")
+    create_workflow_session(configs)
 
     print(f"{GREEN}Starting agents...{RESET}")
     for config in configs:
@@ -552,12 +569,13 @@ def launch(working_dir_arg: str, workflow: str = "default") -> None:
     print(f"{GREEN}{BOLD}SwarmForge is ready.{RESET}")
     print(f"Working directory: {paths.working_dir}")
     print(f"Workflow: {paths.workflow}")
-    print("Sessions:")
+    print(f"Tmux session: {workflow_session}")
+    print("Windows:")
     for config in configs:
-        print(f"  {config.display}: {config.session}")
+        print(f"  {config.display}: {config.session}:{config.window}")
     print()
     print(f"{GREEN}Tip: Notify with: {command_for_agents(paths)} notify <role-or-index> \"message\" -w {paths.workflow}{RESET}")
-    print(f"{GREEN}Tip: Reattach with 'tmux attach-session -t <session-name>'.{RESET}")
+    print(f"{GREEN}Tip: Reattach with 'tmux attach-session -t {workflow_session}'.{RESET}")
     if cleanup_owner is not None:
         owner = next(c for c in configs if c.index == cleanup_owner)
         print(f"{GREEN}Tip: Cleanup is owned by {owner.display}; when it exits, all swarm sessions are killed.{RESET}")
@@ -576,15 +594,21 @@ def workflow_from_context() -> str:
     return clean_name(os.environ.get("SWARMPY_WORKFLOW", "default"))
 
 
-def read_sessions(sessions_file: Path) -> list[tuple[str, str, str, str, str]]:
+def read_sessions(sessions_file: Path) -> list[SessionRow]:
     if not sessions_file.is_file():
         fail(f"Sessions file not found: {sessions_file}")
 
-    rows: list[tuple[str, str, str, str, str]] = []
+    rows: list[SessionRow] = []
     for raw in sessions_file.read_text().splitlines():
         fields = raw.split("\t")
-        if len(fields) == 5:
-            rows.append(tuple(fields))  # type: ignore[arg-type]
+        if len(fields) == 6:
+            index, role, session, window, display, agent = fields
+            rows.append(SessionRow(index, role, session, window, display, agent))
+        elif len(fields) == 5:
+            # Backward compatibility for sessions files written before workflow
+            # sessions were grouped into windows.
+            index, role, session, display, agent = fields
+            rows.append(SessionRow(index, role, session, role, display, agent))
     return rows
 
 
@@ -598,11 +622,11 @@ def resolve_project_paths(project: str | None, workflow: str | None) -> ProjectP
     return paths_for(resolve_project_dir(project), workflow or workflow_from_context())
 
 
-def resolve_session(rows: list[tuple[str, str, str, str, str]], target: str) -> str:
+def resolve_target(rows: list[SessionRow], target: str) -> SessionRow:
     normalized = target.lower()
-    for index, role, session, _display, _agent in rows:
-        if normalized in {index.lower(), role.lower(), session.lower()}:
-            return session
+    for row in rows:
+        if normalized in {row.index.lower(), row.role.lower(), row.session.lower(), row.target.lower()}:
+            return row
     fail(f"Unknown target: {target}")
 
 
@@ -617,12 +641,12 @@ def append_log(paths: ProjectPaths, actor: str, message: str) -> None:
 def cmd_notify(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
     rows = read_sessions(paths.sessions_file)
-    target_session = resolve_session(rows, args.target)
+    target = resolve_target(rows, args.target)
     message = " ".join(args.message)
 
-    append_log(paths, target_session, message)
+    append_log(paths, target.target, message)
 
-    pane_target = first_pane_target(target_session)
+    pane_target = first_pane_target(target.target)
     tmux("send-keys", "-t", pane_target, "-l", "--", message)
     time.sleep(0.15)
     tmux("send-keys", "-t", pane_target, "C-m")
@@ -641,9 +665,9 @@ def cmd_sessions(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
     rows = read_sessions(paths.sessions_file)
     print(f"Swarm sessions for {paths.working_dir} [{paths.workflow}]:")
-    for index, role, session, display, agent in rows:
-        marker = "running" if tmux_has_session(session) else "stopped"
-        print(f"  {index}. {role:<16} {session:<32} {agent:<6} {marker}  ({display})")
+    for row in rows:
+        marker = "running" if tmux_has_session(row.session) else "stopped"
+        print(f"  {row.index}. {row.role:<16} {row.target:<32} {row.agent:<6} {marker}  ({row.display})")
 
 
 def cmd_workflows(args: argparse.Namespace) -> None:
@@ -670,8 +694,9 @@ def cmd_workflows(args: argparse.Namespace) -> None:
 def cmd_attach(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
     rows = read_sessions(paths.sessions_file)
-    session = resolve_session(rows, args.target)
-    os.execvp("tmux", ["tmux", "attach-session", "-t", session])
+    target = resolve_target(rows, args.target)
+    tmux("select-window", "-t", target.target, check=False)
+    os.execvp("tmux", ["tmux", "attach-session", "-t", target.session])
 
 
 def cmd_cleanup(args: argparse.Namespace) -> None:
@@ -679,7 +704,7 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
     if not sessions:
         paths = resolve_project_paths(args.project, args.workflow)
         rows = read_sessions(paths.sessions_file)
-        sessions = [session for _index, _role, session, _display, _agent in rows]
+        sessions = sorted({row.session for row in rows})
 
     for session in sessions:
         tmux("kill-session", "-t", session, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -716,7 +741,7 @@ examples:
 """
     parser = argparse.ArgumentParser(
         prog=Path(sys.argv[0]).name,
-        description="Single-file Python/uv SwarmForge runner using tmux sessions and git worktrees.",
+        description="Single-file Python/uv SwarmForge runner using one tmux session per workflow and one window per role.",
         epilog=examples,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -737,10 +762,10 @@ examples:
     launch_parser.add_argument("working_dir", nargs="?", default=os.getcwd(), help="project directory, default: current directory")
     add_workflow_arg(launch_parser)
 
-    notify_parser = subparsers.add_parser("notify", help="send a message to a role, index, or tmux session")
+    notify_parser = subparsers.add_parser("notify", help="send a message to a role, index, or tmux target")
     add_project_arg(notify_parser)
     add_workflow_arg(notify_parser)
-    notify_parser.add_argument("target", help="role name, session index, or tmux session name")
+    notify_parser.add_argument("target", help="role name, index, workflow session, or session:window target")
     notify_parser.add_argument("message", nargs="+", help="message to type into the target tmux pane")
 
     log_parser = subparsers.add_parser("log", help="append a message to logs/<workflow>/agent_messages.log")
@@ -756,12 +781,12 @@ examples:
     workflows_parser = subparsers.add_parser("workflows", help="list workflows configured in a project")
     add_project_arg(workflows_parser)
 
-    attach_parser = subparsers.add_parser("attach", help="attach to a role, index, or tmux session")
+    attach_parser = subparsers.add_parser("attach", help="attach to a workflow session and select a role window")
     add_project_arg(attach_parser)
     add_workflow_arg(attach_parser)
-    attach_parser.add_argument("target", help="role name, session index, or tmux session name")
+    attach_parser.add_argument("target", help="role name, index, workflow session, or session:window target")
 
-    cleanup_parser = subparsers.add_parser("cleanup", help="kill swarm tmux sessions")
+    cleanup_parser = subparsers.add_parser("cleanup", help="kill workflow tmux sessions")
     add_project_arg(cleanup_parser)
     add_workflow_arg(cleanup_parser)
     cleanup_parser.add_argument("sessions", nargs="*", help="session names; if omitted, read from the project sessions file")
