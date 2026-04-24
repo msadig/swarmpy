@@ -184,6 +184,20 @@ Worktree behavior:
 - `none` uses the main working directory and creates no worktree
 - any other value creates `.worktrees/<workflow>/<name>` on branch `swarmpy-<workflow>-<name>`
 
+You can also launch the whole workflow from one shared worktree:
+
+```bash
+swarmpy launch /path/to/project -w development --worktree nightly
+```
+
+That creates/uses:
+
+```text
+.worktrees/development/nightly
+```
+
+and runs every non-`none` role there, regardless of the per-role worktree names in `swarmforge.conf`.
+
 ## CLI
 
 Show top-level help:
@@ -235,6 +249,12 @@ Launch:
 
 ```bash
 swarmpy launch /path/to/project -w development
+```
+
+Launch from one shared workflow worktree:
+
+```bash
+swarmpy launch /path/to/project -w development --worktree nightly
 ```
 
 List sessions:

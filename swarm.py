@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 SUPPORTED_AGENTS = {"claude", "codex", "none"}
@@ -378,6 +378,20 @@ def write_sessions_file(paths: ProjectPaths, configs: list[WindowConfig]) -> Non
     paths.sessions_file.write_text("\n".join(lines) + "\n")
 
 
+def apply_workflow_worktree(paths: ProjectPaths, configs: list[WindowConfig], worktree: str | None) -> list[WindowConfig]:
+    if not worktree:
+        return configs
+
+    worktree_name = clean_name(worktree)
+    worktree_path = paths.worktrees_dir / worktree_name
+    return [
+        replace(config, worktree_name=worktree_name, worktree_path=worktree_path)
+        if config.worktree_name != "none"
+        else config
+        for config in configs
+    ]
+
+
 def prepare_workspace(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
     for directory in [
         paths.logs_dir,
@@ -548,7 +562,7 @@ def print_banner() -> None:
     print(f"{RESET}")
 
 
-def launch(working_dir_arg: str, workflow: str = "default") -> None:
+def launch(working_dir_arg: str, workflow: str = "default", worktree: str | None = None) -> None:
     working_dir = Path(working_dir_arg)
     if not working_dir.exists():
         fail(f"Working directory does not exist: {working_dir}")
@@ -560,7 +574,7 @@ def launch(working_dir_arg: str, workflow: str = "default") -> None:
     check_dependency("git")
 
     initialize_git_repo(paths.working_dir)
-    configs = parse_config(paths)
+    configs = apply_workflow_worktree(paths, parse_config(paths), worktree)
     check_backend_dependencies(configs)
     prepare_workspace(paths, configs)
     prepare_worktrees(paths, configs)
@@ -583,6 +597,8 @@ def launch(working_dir_arg: str, workflow: str = "default") -> None:
     print(f"{GREEN}{BOLD}SwarmForge is ready.{RESET}")
     print(f"Working directory: {paths.working_dir}")
     print(f"Workflow: {paths.workflow}")
+    if worktree:
+        print(f"Workflow worktree: {paths.worktrees_dir / clean_name(worktree)}")
     print(f"Tmux session: {workflow_session}")
     print("Windows:")
     for config in configs:
@@ -787,6 +803,7 @@ examples:
   swarmpy init ~/code/my-project -w development
   swarmpy init ~/code/my-project -w content
   swarmpy launch ~/code/my-project -w development
+  swarmpy launch ~/code/my-project -w development --worktree dev-run
   swarmpy sessions -p ~/code/my-project -w development
   swarmpy notify reviewer "Please review the latest changes" -p ~/code/my-project -w development
   swarmpy logs -f -p ~/code/my-project -w development
@@ -814,6 +831,7 @@ examples:
     launch_parser = subparsers.add_parser("launch", help="start the configured swarm")
     launch_parser.add_argument("working_dir", nargs="?", default=os.getcwd(), help="project directory, default: current directory")
     add_workflow_arg(launch_parser)
+    launch_parser.add_argument("--worktree", metavar="NAME", help="run the workflow from a shared git worktree under .worktrees/<workflow>/<name>")
 
     notify_parser = subparsers.add_parser("notify", help="send a message to a role, index, or tmux target")
     add_project_arg(notify_parser)
@@ -878,7 +896,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "init":
         init_project(args.working_dir, args.workflow or "default", args.force)
     elif args.command == "launch":
-        launch(args.working_dir if hasattr(args, "working_dir") else os.getcwd(), args.workflow or "default")
+        launch(args.working_dir if hasattr(args, "working_dir") else os.getcwd(), args.workflow or "default", args.worktree)
     elif args.command == "notify":
         cmd_notify(args)
     elif args.command == "log":

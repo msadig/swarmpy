@@ -94,6 +94,30 @@ class SwarmPyTests(unittest.TestCase):
             self.assertIn("Single-file Python/uv SwarmForge runner", result.stdout)
 
     @unittest.skipIf(shutil.which("tmux") is None, "tmux is required for launch/notify integration test")
+    def test_launch_can_use_shared_workflow_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text("window worker none master\nwindow logger none none\n")
+
+            try:
+                self.run_swarmpy("launch", str(project), "-w", "ops", "--worktree", "nightly")
+                sessions = self.run_swarmpy("sessions", "-p", str(project), "-w", "ops")
+                self.assertIn("swarmpy-ops:worker", sessions.stdout)
+                self.assertTrue((project / ".worktrees" / "ops" / "nightly" / ".git").exists())
+            finally:
+                subprocess.run(
+                    [sys.executable, str(SWARM), "cleanup", "-p", str(project), "-w", "ops"],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=test_env(),
+                    check=False,
+                )
+
+    @unittest.skipIf(shutil.which("tmux") is None, "tmux is required for launch/notify integration test")
     def test_logger_workflow_launch_notify_log_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             project = Path(td)
