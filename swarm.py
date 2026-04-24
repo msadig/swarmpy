@@ -505,7 +505,7 @@ def launch_role(paths: ProjectPaths, configs: list[WindowConfig], config: Window
         command = (
             f"{env_cmd} && cd {q(config.worktree_path)} && "
             f"claude --append-system-prompt-file {q(prompt_file)} "
-            f"--permission-mode acceptEdits -n {q('SwarmForge ' + config.display)} "
+            f"--dangerously-skip-permissions -n {q('SwarmForge ' + config.display)} "
             f'"$(cat {q(prompt_file)})"'
         )
     elif config.agent == "codex":
