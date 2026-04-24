@@ -209,6 +209,7 @@ workflows  list workflows configured in a project
 sessions   list configured sessions and running status
 notify     send a message to a role, index, or tmux target
 log        append a message to logs/<workflow>/agent_messages.log
+logs       show or follow logs/<workflow>/agent_messages.log
 attach     attach to a workflow session and select a role window
 cleanup    kill workflow tmux sessions
 ```
@@ -258,6 +259,24 @@ Append to workflow log:
 
 ```bash
 swarmpy log reviewer "Review started." -p /path/to/project -w development
+```
+
+Show recent workflow logs:
+
+```bash
+swarmpy logs -p /path/to/project -w development
+```
+
+Follow workflow logs:
+
+```bash
+swarmpy logs -f -p /path/to/project -w development
+```
+
+Show the log file path:
+
+```bash
+swarmpy logs --path -p /path/to/project -w development
 ```
 
 Cleanup all sessions for a workflow:

@@ -661,6 +661,24 @@ def cmd_log(args: argparse.Namespace) -> None:
     print(f"[{args.role}] {message}")
 
 
+def cmd_logs(args: argparse.Namespace) -> None:
+    paths = resolve_project_paths(args.project, args.workflow)
+    log_file = paths.logs_dir / "agent_messages.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.touch(exist_ok=True)
+
+    if args.path:
+        print(log_file)
+        return
+
+    if args.follow:
+        os.execvp("tail", ["tail", "-n", str(args.lines), "-f", str(log_file)])
+
+    lines = log_file.read_text().splitlines()
+    for line in lines[-args.lines :]:
+        print(line)
+
+
 def cmd_sessions(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
     rows = read_sessions(paths.sessions_file)
@@ -737,6 +755,7 @@ examples:
   swarmpy launch ~/code/my-project -w development
   swarmpy sessions -p ~/code/my-project -w development
   swarmpy notify reviewer "Please review the latest changes" -p ~/code/my-project -w development
+  swarmpy logs -f -p ~/code/my-project -w development
   swarmpy cleanup -p ~/code/my-project -w development
 """
     parser = argparse.ArgumentParser(
@@ -774,6 +793,13 @@ examples:
     log_parser.add_argument("role", help="actor name to write in the log")
     log_parser.add_argument("message", nargs="+", help="message to log")
 
+    logs_parser = subparsers.add_parser("logs", help="show or follow logs/<workflow>/agent_messages.log")
+    add_project_arg(logs_parser)
+    add_workflow_arg(logs_parser)
+    logs_parser.add_argument("-n", "--lines", type=int, default=80, help="number of lines to show before exiting/following, default: 80")
+    logs_parser.add_argument("-f", "--follow", action="store_true", help="follow the log like tail -f")
+    logs_parser.add_argument("--path", action="store_true", help="print the log file path and exit")
+
     sessions_parser = subparsers.add_parser("sessions", help="list configured sessions and running status")
     add_project_arg(sessions_parser)
     add_workflow_arg(sessions_parser)
@@ -803,7 +829,7 @@ def main(argv: list[str] | None = None) -> None:
     if argv and argv[0] == "help":
         argv = ["--help"] if len(argv) == 1 else [argv[1], "--help"]
 
-    commands = {"install", "init", "launch", "notify", "log", "sessions", "workflows", "attach", "cleanup"}
+    commands = {"install", "init", "launch", "notify", "log", "logs", "sessions", "workflows", "attach", "cleanup"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         argv = ["launch", *argv]
 
@@ -820,6 +846,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_notify(args)
     elif args.command == "log":
         cmd_log(args)
+    elif args.command == "logs":
+        cmd_logs(args)
     elif args.command == "sessions":
         cmd_sessions(args)
     elif args.command == "workflows":

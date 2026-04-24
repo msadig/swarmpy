@@ -49,6 +49,7 @@ class SwarmPyTests(unittest.TestCase):
         self.assertIn("init", result.stdout)
         self.assertIn("workflows", result.stdout)
         self.assertIn("notify", result.stdout)
+        self.assertIn("logs", result.stdout)
 
     def test_init_creates_multiple_workflows_with_settings(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -123,6 +124,13 @@ class SwarmPyTests(unittest.TestCase):
                 log_text = log_file.read_text()
                 self.assertIn("[swarmpy-ops:logger] hello ops", log_text)
                 self.assertIn("[tester] log entry", log_text)
+
+                logs = self.run_swarmpy("logs", "-n", "2", "-p", str(project), "-w", "ops")
+                self.assertIn("[swarmpy-ops:logger] hello ops", logs.stdout)
+                self.assertIn("[tester] log entry", logs.stdout)
+
+                log_path = self.run_swarmpy("logs", "--path", "-p", str(project), "-w", "ops")
+                self.assertEqual(Path(log_path.stdout.strip()).resolve(), log_file.resolve())
             finally:
                 subprocess.run(
                     [sys.executable, str(SWARM), "cleanup", "-p", str(project), "-w", "ops"],
