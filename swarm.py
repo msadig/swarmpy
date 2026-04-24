@@ -53,13 +53,17 @@ class WindowConfig:
 class ProjectPaths:
     working_dir: Path
     script_path: Path
+    workflow: str
     swarmforge_dir: Path
     worktrees_dir: Path
     config_file: Path
     constitution_file: Path
+    settings_file: Path
     state_dir: Path
     sessions_file: Path
     prompts_dir: Path
+    logs_dir: Path
+    context_dir: Path
 
 
 def q(value: str | Path) -> str:
@@ -80,21 +84,41 @@ def check_dependency(name: str) -> None:
         fail(f"'{name}' is required but not installed.")
 
 
-def paths_for(working_dir: Path) -> ProjectPaths:
+def clean_name(name: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in name.strip())
+    cleaned = cleaned.strip("-")
+    if not cleaned:
+        fail("Workflow name cannot be empty")
+    return cleaned
+
+
+def workflow_dir_for(working_dir: Path, workflow: str) -> Path:
+    base = working_dir / "swarmforge"
+    if workflow == "default":
+        return base
+    return base / "workflows" / workflow
+
+
+def paths_for(working_dir: Path, workflow: str = "default") -> ProjectPaths:
     working_dir = working_dir.expanduser().resolve()
+    workflow = clean_name(workflow)
     script_path = Path(__file__).expanduser().resolve()
-    swarmforge_dir = working_dir / "swarmforge"
-    state_dir = working_dir / ".swarmforge"
+    swarmforge_dir = workflow_dir_for(working_dir, workflow)
+    state_dir = working_dir / ".swarmforge" / workflow
     return ProjectPaths(
         working_dir=working_dir,
         script_path=script_path,
+        workflow=workflow,
         swarmforge_dir=swarmforge_dir,
-        worktrees_dir=working_dir / ".worktrees",
+        worktrees_dir=working_dir / ".worktrees" / workflow,
         config_file=swarmforge_dir / "swarmforge.conf",
         constitution_file=swarmforge_dir / "constitution.prompt",
+        settings_file=swarmforge_dir / "settings.env",
         state_dir=state_dir,
         sessions_file=state_dir / "sessions.tsv",
         prompts_dir=state_dir / "prompts",
+        logs_dir=working_dir / "logs" / workflow,
+        context_dir=working_dir / "agent_context" / workflow,
     )
 
 
@@ -176,31 +200,38 @@ def install_cli(bin_dir_arg: str | None, force: bool = False) -> None:
         print("  swarmpy --help")
 
 
-def init_project(working_dir_arg: str, force: bool = False) -> None:
+def init_project(working_dir_arg: str, workflow: str = "default", force: bool = False) -> None:
     working_dir = Path(working_dir_arg).expanduser().resolve()
     working_dir.mkdir(parents=True, exist_ok=True)
-    paths = paths_for(working_dir)
+    paths = paths_for(working_dir, workflow)
 
     files = {
-        paths.config_file: """# SwarmPy config. Format: window <role> <agent> <worktree>
+        paths.config_file: f"""# SwarmPy workflow config: {paths.workflow}
+# Format: window <role> <agent> <worktree>
 # Agents: claude, codex, none
-# Worktree: master runs in the main checkout; none creates no worktree; any other name creates .worktrees/<name>.
+# Worktree: master runs in the main checkout; none creates no worktree; any other name creates .worktrees/{paths.workflow}/<name>.
 window architect claude master
 window coder codex coder
 window reviewer codex reviewer
 window logger none none
 """,
-        paths.constitution_file: """# Constitution
+        paths.settings_file: f"""# Workflow settings for: {paths.workflow}
+# This file is sourced before each agent starts.
+# Put workflow-specific environment variables here, for example:
+# GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+# GITHUB_LABEL=bug
+""",
+        paths.constitution_file: f"""# Constitution: {paths.workflow}
 
-Every agent must follow these rules:
+Every agent in this workflow must follow these rules:
 
 1. Read this file first.
-2. Read your role prompt in `swarmforge/<role>.prompt`.
+2. Read your role prompt from this workflow directory.
 3. Make small, reviewable changes.
-4. Keep tests, linting, and project checks green.
-5. Communicate through `swarmpy notify <role-or-index> "message"` and `swarmpy log <role> "message"`.
+4. Keep workflow-specific checks green.
+5. Communicate through `swarmpy notify <role-or-index> "message" -w {paths.workflow}` and `swarmpy log <role> "message" -w {paths.workflow}`.
 
-Project-specific rules belong here. Keep them short and explicit.
+Workflow-specific rules belong here. Keep them short and explicit.
 """,
         paths.swarmforge_dir / "architect.prompt": """# Architect
 
@@ -245,7 +276,7 @@ You verify quality and correctness.
         check_dependency("git")
         initialize_git_repo(working_dir)
 
-    print(f"{GREEN}SwarmPy project initialized:{RESET} {working_dir}")
+    print(f"{GREEN}SwarmPy workflow initialized:{RESET} {working_dir} [{paths.workflow}]")
     if created:
         print("Created:")
         for path in created:
@@ -257,15 +288,16 @@ You verify quality and correctness.
     print()
     print("Next steps:")
     print(f"  1. Edit {paths.config_file.relative_to(working_dir)} and prompt files as needed")
-    print(f"  2. Start the swarm: {command_for_agents(paths)} launch {working_dir}")
+    print(f"  2. Edit workflow settings: {paths.settings_file.relative_to(working_dir)}")
+    print(f"  3. Start the swarm: {command_for_agents(paths)} launch {working_dir} -w {paths.workflow}")
 
 
 def display_name_for_role(role: str) -> str:
     return " ".join(part.capitalize() for part in role.replace("-", " ").replace("_", " ").split())
 
 
-def session_name_for_role(role: str) -> str:
-    return f"{SESSION_PREFIX}-{role}"
+def session_name_for_role(workflow: str, role: str) -> str:
+    return f"swarmpy-{workflow}-{role}"
 
 
 def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
@@ -316,7 +348,7 @@ def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
                 role=role,
                 agent=agent,
                 worktree_name=worktree_name,
-                session=session_name_for_role(role),
+                session=session_name_for_role(paths.workflow, role),
                 display=display_name_for_role(role),
                 worktree_path=worktree_path,
             )
@@ -334,8 +366,8 @@ def write_sessions_file(paths: ProjectPaths, configs: list[WindowConfig]) -> Non
 
 def prepare_workspace(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
     for directory in [
-        paths.working_dir / "logs",
-        paths.working_dir / "agent_context",
+        paths.logs_dir,
+        paths.context_dir,
         paths.working_dir / "features",
         paths.state_dir,
         paths.prompts_dir,
@@ -352,7 +384,7 @@ def prepare_worktrees(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
             continue
         if (config.worktree_path / ".git").exists():
             continue
-        branch_name = f"swarmforge-{config.worktree_name}"
+        branch_name = f"swarmpy-{paths.workflow}-{config.worktree_name}"
         run(
             [
                 "git",
@@ -402,10 +434,14 @@ def create_role_session(config: WindowConfig) -> None:
 def write_agent_instruction_file(paths: ProjectPaths, role: str) -> Path:
     prompt_file = paths.prompts_dir / f"{role}.md"
     prompt_file.write_text(
-        f"Read swarmforge/constitution.prompt, then read every file it refers to recursively, and obey all of those instructions.\n"
-        f"Read swarmforge/{role}.prompt, then read every file it refers to recursively, and follow all of those instructions.\n"
-        f"To notify another role, run: {command_for_agents(paths)} notify <role-or-index> '<message>'\n"
-        f"To write a swarm log entry, run: {command_for_agents(paths)} log {role} '<message>'\n"
+        f"This agent is running in SwarmPy workflow: {paths.workflow}\n"
+        f"Read {paths.constitution_file.relative_to(paths.working_dir)}, then read every file it refers to recursively, and obey all of those instructions.\n"
+        f"Read {Path(paths.swarmforge_dir.name) / f'{role}.prompt' if paths.workflow == 'default' else paths.swarmforge_dir.relative_to(paths.working_dir) / f'{role}.prompt'}, then read every file it refers to recursively, and follow all of those instructions.\n"
+        f"Workflow settings are in {paths.settings_file.relative_to(paths.working_dir)}.\n"
+        f"Workflow logs are in {paths.logs_dir.relative_to(paths.working_dir)}.\n"
+        f"Workflow context is in {paths.context_dir.relative_to(paths.working_dir)}.\n"
+        f"To notify another role, run: {command_for_agents(paths)} notify <role-or-index> '<message>' -w {paths.workflow}\n"
+        f"To write a swarm log entry, run: {command_for_agents(paths)} log {role} '<message>' -w {paths.workflow}\n"
     )
     return prompt_file
 
@@ -415,7 +451,11 @@ def script_command(paths: ProjectPaths) -> str:
 
 
 def base_environment_command(paths: ProjectPaths) -> str:
-    return f"export SWARMFORGE_PROJECT_DIR={q(paths.working_dir)} SWARMPY={q(command_for_agents(paths))} SWARMFORGE_SCRIPT={q(paths.script_path)}"
+    return (
+        f"set -a; [ -f {q(paths.settings_file)} ] && . {q(paths.settings_file)}; set +a; "
+        f"export SWARMFORGE_PROJECT_DIR={q(paths.working_dir)} SWARMPY_WORKFLOW={q(paths.workflow)} "
+        f"SWARMPY={q(command_for_agents(paths))} SWARMFORGE_SCRIPT={q(paths.script_path)}"
+    )
 
 
 def choose_cleanup_owner(configs: list[WindowConfig]) -> int | None:
@@ -435,7 +475,7 @@ def launch_role(paths: ProjectPaths, configs: list[WindowConfig], config: Window
 
     if config.agent == "none":
         if config.role == "logger":
-            command = f"cd {q(paths.working_dir)} && touch logs/agent_messages.log && tail -f logs/agent_messages.log"
+            command = f"cd {q(paths.working_dir)} && mkdir -p {q(paths.logs_dir)} && touch {q(paths.logs_dir / 'agent_messages.log')} && tail -f {q(paths.logs_dir / 'agent_messages.log')}"
             tmux("send-keys", "-t", target, command, "Enter")
         print(f"  {CYAN}[{config.display}]{RESET} opened without agent backend")
         return
@@ -476,12 +516,12 @@ def print_banner() -> None:
     print(f"{RESET}")
 
 
-def launch(working_dir_arg: str) -> None:
+def launch(working_dir_arg: str, workflow: str = "default") -> None:
     working_dir = Path(working_dir_arg)
     if not working_dir.exists():
         fail(f"Working directory does not exist: {working_dir}")
 
-    paths = paths_for(working_dir)
+    paths = paths_for(working_dir, workflow)
 
     check_dependency("uv")
     check_dependency("tmux")
@@ -511,11 +551,12 @@ def launch(working_dir_arg: str) -> None:
     print()
     print(f"{GREEN}{BOLD}SwarmForge is ready.{RESET}")
     print(f"Working directory: {paths.working_dir}")
+    print(f"Workflow: {paths.workflow}")
     print("Sessions:")
     for config in configs:
         print(f"  {config.display}: {config.session}")
     print()
-    print(f"{GREEN}Tip: Notify with: {command_for_agents(paths)} notify <role-or-index> \"message\"{RESET}")
+    print(f"{GREEN}Tip: Notify with: {command_for_agents(paths)} notify <role-or-index> \"message\" -w {paths.workflow}{RESET}")
     print(f"{GREEN}Tip: Reattach with 'tmux attach-session -t <session-name>'.{RESET}")
     if cleanup_owner is not None:
         owner = next(c for c in configs if c.index == cleanup_owner)
@@ -529,6 +570,10 @@ def project_dir_from_context() -> Path:
         return Path(env_project).expanduser().resolve()
 
     return Path.cwd().resolve()
+
+
+def workflow_from_context() -> str:
+    return clean_name(os.environ.get("SWARMPY_WORKFLOW", "default"))
 
 
 def read_sessions(sessions_file: Path) -> list[tuple[str, str, str, str, str]]:
@@ -549,6 +594,10 @@ def resolve_project_dir(project: str | None) -> Path:
     return project_dir_from_context()
 
 
+def resolve_project_paths(project: str | None, workflow: str | None) -> ProjectPaths:
+    return paths_for(resolve_project_dir(project), workflow or workflow_from_context())
+
+
 def resolve_session(rows: list[tuple[str, str, str, str, str]], target: str) -> str:
     normalized = target.lower()
     for index, role, session, _display, _agent in rows:
@@ -557,8 +606,8 @@ def resolve_session(rows: list[tuple[str, str, str, str, str]], target: str) -> 
     fail(f"Unknown target: {target}")
 
 
-def append_log(project_dir: Path, actor: str, message: str) -> None:
-    log_file = project_dir / "logs" / "agent_messages.log"
+def append_log(paths: ProjectPaths, actor: str, message: str) -> None:
+    log_file = paths.logs_dir / "agent_messages.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with log_file.open("a") as f:
@@ -566,12 +615,12 @@ def append_log(project_dir: Path, actor: str, message: str) -> None:
 
 
 def cmd_notify(args: argparse.Namespace) -> None:
-    project_dir = resolve_project_dir(args.project)
-    rows = read_sessions(project_dir / ".swarmforge" / "sessions.tsv")
+    paths = resolve_project_paths(args.project, args.workflow)
+    rows = read_sessions(paths.sessions_file)
     target_session = resolve_session(rows, args.target)
     message = " ".join(args.message)
 
-    append_log(project_dir, target_session, message)
+    append_log(paths, target_session, message)
 
     pane_target = first_pane_target(target_session)
     tmux("send-keys", "-t", pane_target, "-l", "--", message)
@@ -582,24 +631,45 @@ def cmd_notify(args: argparse.Namespace) -> None:
 
 
 def cmd_log(args: argparse.Namespace) -> None:
-    project_dir = resolve_project_dir(args.project)
+    paths = resolve_project_paths(args.project, args.workflow)
     message = " ".join(args.message)
-    append_log(project_dir, args.role, message)
+    append_log(paths, args.role, message)
     print(f"[{args.role}] {message}")
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
-    project_dir = resolve_project_dir(args.project)
-    rows = read_sessions(project_dir / ".swarmforge" / "sessions.tsv")
-    print(f"Swarm sessions for {project_dir}:")
+    paths = resolve_project_paths(args.project, args.workflow)
+    rows = read_sessions(paths.sessions_file)
+    print(f"Swarm sessions for {paths.working_dir} [{paths.workflow}]:")
     for index, role, session, display, agent in rows:
         marker = "running" if tmux_has_session(session) else "stopped"
-        print(f"  {index}. {role:<16} {session:<24} {agent:<6} {marker}  ({display})")
+        print(f"  {index}. {role:<16} {session:<32} {agent:<6} {marker}  ({display})")
+
+
+def cmd_workflows(args: argparse.Namespace) -> None:
+    project_dir = resolve_project_dir(args.project)
+    base = project_dir / "swarmforge"
+    workflows: list[tuple[str, Path]] = []
+    if (base / "swarmforge.conf").is_file():
+        workflows.append(("default", base))
+    workflows_dir = base / "workflows"
+    if workflows_dir.is_dir():
+        for child in sorted(workflows_dir.iterdir()):
+            if child.is_dir() and (child / "swarmforge.conf").is_file():
+                workflows.append((child.name, child))
+
+    if not workflows:
+        print(f"No workflows found in {project_dir}. Create one with: swarmpy init {project_dir} -w development")
+        return
+
+    print(f"SwarmPy workflows for {project_dir}:")
+    for name, path in workflows:
+        print(f"  {name:<16} {path.relative_to(project_dir)}")
 
 
 def cmd_attach(args: argparse.Namespace) -> None:
-    project_dir = resolve_project_dir(args.project)
-    rows = read_sessions(project_dir / ".swarmforge" / "sessions.tsv")
+    paths = resolve_project_paths(args.project, args.workflow)
+    rows = read_sessions(paths.sessions_file)
     session = resolve_session(rows, args.target)
     os.execvp("tmux", ["tmux", "attach-session", "-t", session])
 
@@ -607,8 +677,8 @@ def cmd_attach(args: argparse.Namespace) -> None:
 def cmd_cleanup(args: argparse.Namespace) -> None:
     sessions = args.sessions
     if not sessions:
-        project_dir = resolve_project_dir(args.project)
-        rows = read_sessions(project_dir / ".swarmforge" / "sessions.tsv")
+        paths = resolve_project_paths(args.project, args.workflow)
+        rows = read_sessions(paths.sessions_file)
         sessions = [session for _index, _role, session, _display, _agent in rows]
 
     for session in sessions:
@@ -624,17 +694,25 @@ def add_project_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_workflow_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-w",
+        "--workflow",
+        default=None,
+        help="workflow name; defaults to $SWARMPY_WORKFLOW or 'default'",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     examples = """
 examples:
   swarmpy install
-  swarmpy init ~/code/my-project
-  swarmpy launch ~/code/my-project
-  swarmpy sessions -p ~/code/my-project
-  swarmpy attach coder -p ~/code/my-project
-  swarmpy notify reviewer "Please review the latest changes" -p ~/code/my-project
-  swarmpy log architect "Plan updated" -p ~/code/my-project
-  swarmpy cleanup -p ~/code/my-project
+  swarmpy init ~/code/my-project -w development
+  swarmpy init ~/code/my-project -w content
+  swarmpy launch ~/code/my-project -w development
+  swarmpy sessions -p ~/code/my-project -w development
+  swarmpy notify reviewer "Please review the latest changes" -p ~/code/my-project -w development
+  swarmpy cleanup -p ~/code/my-project -w development
 """
     parser = argparse.ArgumentParser(
         prog=Path(sys.argv[0]).name,
@@ -652,30 +730,40 @@ examples:
 
     init_parser = subparsers.add_parser("init", help="create swarmforge config and role prompt scaffolding")
     init_parser.add_argument("working_dir", nargs="?", default=os.getcwd(), help="project directory, default: current directory")
+    add_workflow_arg(init_parser)
     init_parser.add_argument("--force", action="store_true", help="overwrite existing scaffold files")
 
     launch_parser = subparsers.add_parser("launch", help="start the configured swarm")
     launch_parser.add_argument("working_dir", nargs="?", default=os.getcwd(), help="project directory, default: current directory")
+    add_workflow_arg(launch_parser)
 
     notify_parser = subparsers.add_parser("notify", help="send a message to a role, index, or tmux session")
     add_project_arg(notify_parser)
+    add_workflow_arg(notify_parser)
     notify_parser.add_argument("target", help="role name, session index, or tmux session name")
     notify_parser.add_argument("message", nargs="+", help="message to type into the target tmux pane")
 
-    log_parser = subparsers.add_parser("log", help="append a message to logs/agent_messages.log")
+    log_parser = subparsers.add_parser("log", help="append a message to logs/<workflow>/agent_messages.log")
     add_project_arg(log_parser)
+    add_workflow_arg(log_parser)
     log_parser.add_argument("role", help="actor name to write in the log")
     log_parser.add_argument("message", nargs="+", help="message to log")
 
     sessions_parser = subparsers.add_parser("sessions", help="list configured sessions and running status")
     add_project_arg(sessions_parser)
+    add_workflow_arg(sessions_parser)
+
+    workflows_parser = subparsers.add_parser("workflows", help="list workflows configured in a project")
+    add_project_arg(workflows_parser)
 
     attach_parser = subparsers.add_parser("attach", help="attach to a role, index, or tmux session")
     add_project_arg(attach_parser)
+    add_workflow_arg(attach_parser)
     attach_parser.add_argument("target", help="role name, session index, or tmux session name")
 
     cleanup_parser = subparsers.add_parser("cleanup", help="kill swarm tmux sessions")
     add_project_arg(cleanup_parser)
+    add_workflow_arg(cleanup_parser)
     cleanup_parser.add_argument("sessions", nargs="*", help="session names; if omitted, read from the project sessions file")
 
     return parser
@@ -690,7 +778,7 @@ def main(argv: list[str] | None = None) -> None:
     if argv and argv[0] == "help":
         argv = ["--help"] if len(argv) == 1 else [argv[1], "--help"]
 
-    commands = {"install", "init", "launch", "notify", "log", "sessions", "attach", "cleanup"}
+    commands = {"install", "init", "launch", "notify", "log", "sessions", "workflows", "attach", "cleanup"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         argv = ["launch", *argv]
 
@@ -700,15 +788,17 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "install":
         install_cli(args.bin_dir, args.force)
     elif args.command == "init":
-        init_project(args.working_dir, args.force)
+        init_project(args.working_dir, args.workflow or "default", args.force)
     elif args.command == "launch":
-        launch(args.working_dir if hasattr(args, "working_dir") else os.getcwd())
+        launch(args.working_dir if hasattr(args, "working_dir") else os.getcwd(), args.workflow or "default")
     elif args.command == "notify":
         cmd_notify(args)
     elif args.command == "log":
         cmd_log(args)
     elif args.command == "sessions":
         cmd_sessions(args)
+    elif args.command == "workflows":
+        cmd_workflows(args)
     elif args.command == "attach":
         cmd_attach(args)
     elif args.command == "cleanup":

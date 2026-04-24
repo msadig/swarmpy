@@ -5,9 +5,11 @@ A single-file Python/uv port of SwarmForge.
 The goal is intentionally boring:
 
 - one file: `swarm.py`
+- one global command: `swarmpy`
 - no shell helper scripts
 - no Terminal.app / `osascript`
 - only `tmux` sessions/windows and git worktrees
+- multiple workflows per project
 - simple config-driven agent launch
 
 ## Requirements
@@ -41,32 +43,102 @@ Then use:
 
 ```bash
 swarmpy --help
-swarmpy init /path/to/project
-swarmpy launch /path/to/project
 ```
 
 Without installing, you can still run:
 
 ```bash
-uv run --script swarm.py [WORKING_DIR]
+uv run --script swarm.py [COMMAND]
 ```
 
-If `WORKING_DIR` is omitted, the current directory is used.
+## Workflows
 
-## Project layout
+A project can have many workflows. Each workflow has its own config, role prompts, settings, tmux sessions, worktrees, logs, and agent context.
 
-A managed project needs:
+Default workflow layout:
 
 ```text
 swarmforge/
   swarmforge.conf
+  settings.env
   constitution.prompt
   architect.prompt
   coder.prompt
   reviewer.prompt
 ```
 
-Example `swarmforge/swarmforge.conf`:
+Named workflow layout:
+
+```text
+swarmforge/
+  workflows/
+    development/
+      swarmforge.conf
+      settings.env
+      constitution.prompt
+      architect.prompt
+      coder.prompt
+      reviewer.prompt
+    content/
+      swarmforge.conf
+      settings.env
+      constitution.prompt
+      researcher.prompt
+      writer.prompt
+      reviewer.prompt
+```
+
+Create two workflows in the same project:
+
+```bash
+swarmpy init /path/to/project -w development
+swarmpy init /path/to/project -w content
+```
+
+List workflows:
+
+```bash
+swarmpy workflows -p /path/to/project
+```
+
+Launch one workflow:
+
+```bash
+swarmpy launch /path/to/project -w development
+```
+
+Launch another workflow independently:
+
+```bash
+swarmpy launch /path/to/project -w content
+```
+
+Workflow-specific runtime state:
+
+```text
+.swarmforge/<workflow>/
+.worktrees/<workflow>/
+logs/<workflow>/agent_messages.log
+agent_context/<workflow>/
+```
+
+Workflow-specific settings live in:
+
+```text
+swarmforge/workflows/<workflow>/settings.env
+```
+
+That file is sourced before each agent starts, so you can put environment variables there, for example:
+
+```env
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+GITHUB_LABEL=bug
+REPORT_OUTPUT_DIR=agent_context/content/reports
+```
+
+## Config
+
+Each workflow has a `swarmforge.conf`:
 
 ```conf
 window architect claude master
@@ -91,7 +163,7 @@ Worktree behavior:
 
 - `master` uses the main working directory
 - `none` uses the main working directory and creates no worktree
-- any other value creates `.worktrees/<name>` on branch `swarmforge-<name>`
+- any other value creates `.worktrees/<workflow>/<name>` on branch `swarmpy-<workflow>-<name>`
 
 ## CLI
 
@@ -111,88 +183,82 @@ swarmpy cleanup --help
 Commands:
 
 ```text
-install   install the global `swarmpy` command
-init      create swarmforge config and role prompt scaffolding
-launch    start the configured swarm
-notify    send a message to a role, index, or tmux session
-log       append a message to logs/agent_messages.log
-sessions  list configured sessions and running status
-attach    attach to a role, index, or tmux session
-cleanup   kill swarm tmux sessions
+install    install the global `swarmpy` command
+init       create workflow config and role prompt scaffolding
+launch     start the configured workflow
+workflows  list workflows configured in a project
+sessions   list configured sessions and running status
+notify     send a message to a role, index, or tmux session
+log        append a message to logs/<workflow>/agent_messages.log
+attach     attach to a role, index, or tmux session
+cleanup    kill workflow tmux sessions
 ```
 
-Create the project wiring/scaffolding:
+Create workflow scaffolding:
 
 ```bash
-swarmpy init /path/to/project
+swarmpy init /path/to/project -w development
 ```
 
 This creates:
 
 ```text
-swarmforge/swarmforge.conf
-swarmforge/constitution.prompt
-swarmforge/architect.prompt
-swarmforge/coder.prompt
-swarmforge/reviewer.prompt
+swarmforge/workflows/development/swarmforge.conf
+swarmforge/workflows/development/settings.env
+swarmforge/workflows/development/constitution.prompt
+swarmforge/workflows/development/architect.prompt
+swarmforge/workflows/development/coder.prompt
+swarmforge/workflows/development/reviewer.prompt
 ```
-
-It also initializes git for a new project and adds SwarmPy runtime paths to `.gitignore`.
 
 Launch:
 
 ```bash
-swarmpy /path/to/project
-# or
-swarmpy launch /path/to/project
+swarmpy launch /path/to/project -w development
 ```
 
 List sessions:
 
 ```bash
-swarmpy sessions -p /path/to/project
+swarmpy sessions -p /path/to/project -w development
 ```
 
 Attach to a role:
 
 ```bash
-swarmpy attach coder -p /path/to/project
+swarmpy attach coder -p /path/to/project -w development
 ```
 
 Notify an agent:
 
 ```bash
-swarmpy notify coder "Please implement the next slice." -p /path/to/project
+swarmpy notify coder "Please implement the next slice." -p /path/to/project -w development
 ```
 
-Append to swarm log:
+Append to workflow log:
 
 ```bash
-swarmpy log reviewer "Review started." -p /path/to/project
+swarmpy log reviewer "Review started." -p /path/to/project -w development
 ```
 
-Cleanup all sessions for a project:
+Cleanup all sessions for a workflow:
 
 ```bash
-swarmpy cleanup -p /path/to/project
+swarmpy cleanup -p /path/to/project -w development
 ```
 
 Cleanup explicit sessions:
 
 ```bash
-swarmpy cleanup swarmforge-architect swarmforge-coder swarmforge-reviewer
+swarmpy cleanup swarmpy-development-architect swarmpy-development-coder swarmpy-development-reviewer
 ```
 
-## Runtime files in the managed project
+## Tests
 
-`swarmpy` creates local runtime state inside the managed project:
+Run the regression suite:
 
-```text
-.swarmforge/
-.worktrees/
-logs/
-agent_context/
-features/
+```bash
+python3 test.py
 ```
 
-These are added to `.gitignore` when initializing a new repository.
+The tests cover CLI help, workflow scaffolding, global `swarmpy` installation, and a logger-only tmux workflow with notify/log/cleanup.
