@@ -104,8 +104,9 @@ class SwarmPyTests(unittest.TestCase):
 
             try:
                 self.run_swarmpy("launch", str(project), "-w", "ops", "--worktree", "nightly")
+                expected_session = f"swarmpy-{project.name.lower()}-ops"
                 sessions = self.run_swarmpy("sessions", "-p", str(project), "-w", "ops")
-                self.assertIn("swarmpy-ops:worker", sessions.stdout)
+                self.assertIn(f"{expected_session}:worker", sessions.stdout)
                 self.assertTrue((project / ".worktrees" / "ops" / "nightly" / ".git").exists())
             finally:
                 subprocess.run(
@@ -128,9 +129,10 @@ class SwarmPyTests(unittest.TestCase):
 
             try:
                 self.run_swarmpy("launch", str(project), "-w", "ops")
+                expected_session = f"swarmpy-{project.name.lower()}-ops"
                 sessions = self.run_swarmpy("sessions", "-p", str(project), "-w", "ops")
-                self.assertIn("swarmpy-ops:logger", sessions.stdout)
-                self.assertIn("swarmpy-ops:observer", sessions.stdout)
+                self.assertIn(f"{expected_session}:logger", sessions.stdout)
+                self.assertIn(f"{expected_session}:observer", sessions.stdout)
                 self.assertIn("running", sessions.stdout)
 
                 tmux_sessions = subprocess.run(
@@ -140,18 +142,18 @@ class SwarmPyTests(unittest.TestCase):
                     stderr=subprocess.PIPE,
                     check=True,
                 )
-                self.assertIn("swarmpy-ops: 2", tmux_sessions.stdout)
+                self.assertIn(f"{expected_session}: 2", tmux_sessions.stdout)
 
                 self.run_swarmpy("notify", "logger", "hello", "ops", "-p", str(project), "-w", "ops")
                 self.run_swarmpy("log", "tester", "log", "entry", "-p", str(project), "-w", "ops")
 
                 log_file = project / "logs" / "ops" / "agent_messages.log"
                 log_text = log_file.read_text()
-                self.assertIn("[swarmpy-ops:logger] hello ops", log_text)
+                self.assertIn(f"[{expected_session}:logger] hello ops", log_text)
                 self.assertIn("[tester] log entry", log_text)
 
                 logs = self.run_swarmpy("logs", "-n", "2", "-p", str(project), "-w", "ops")
-                self.assertIn("[swarmpy-ops:logger] hello ops", logs.stdout)
+                self.assertIn(f"[{expected_session}:logger] hello ops", logs.stdout)
                 self.assertIn("[tester] log entry", logs.stdout)
 
                 log_path = self.run_swarmpy("logs", "--path", "-p", str(project), "-w", "ops")

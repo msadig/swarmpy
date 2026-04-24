@@ -60,18 +60,18 @@ A project can have many workflows. Each workflow has its own config, role prompt
 Tmux grouping is workflow-first:
 
 ```text
-swarmpy-development          # tmux session
-  architect                  # tmux window
-  coder                      # tmux window
-  reviewer                   # tmux window
-  logger                     # tmux window
+swarmpy-myproject-development    # tmux session
+  architect                      # tmux window
+  coder                          # tmux window
+  reviewer                       # tmux window
+  logger                         # tmux window
 
-swarmpy-seo                  # tmux session
-  collector                  # tmux window
-  analyst                    # tmux window
-  writer                     # tmux window
-  reviewer                   # tmux window
-  logger                     # tmux window
+swarmpy-goldinvest-seo           # tmux session
+  collector                      # tmux window
+  analyst                        # tmux window
+  writer                         # tmux window
+  reviewer                       # tmux window
+  logger                         # tmux window
 ```
 
 Default workflow layout:
@@ -182,7 +182,7 @@ Worktree behavior:
 
 - `master` uses the main working directory
 - `none` uses the main working directory and creates no worktree
-- any other value creates `.worktrees/<workflow>/<name>` on branch `swarmpy-<workflow>-<name>`
+- any other value creates `.worktrees/<workflow>/<name>` on branch `swarmpy-<project>-<workflow>-<name>`
 
 You can also launch the whole workflow from one shared worktree:
 
@@ -326,7 +326,7 @@ swarmpy cleanup -p /path/to/project -w development
 Cleanup explicit sessions:
 
 ```bash
-swarmpy cleanup swarmpy-development
+swarmpy cleanup swarmpy-myproject-development
 ```
 
 ## Tests

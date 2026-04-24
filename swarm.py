@@ -66,6 +66,7 @@ class SessionRow:
 class ProjectPaths:
     working_dir: Path
     script_path: Path
+    project_id: str
     workflow: str
     swarmforge_dir: Path
     worktrees_dir: Path
@@ -115,12 +116,14 @@ def workflow_dir_for(working_dir: Path, workflow: str) -> Path:
 def paths_for(working_dir: Path, workflow: str = "default") -> ProjectPaths:
     working_dir = working_dir.expanduser().resolve()
     workflow = clean_name(workflow)
+    project_id = clean_name(working_dir.name).lower()
     script_path = Path(__file__).expanduser().resolve()
     swarmforge_dir = workflow_dir_for(working_dir, workflow)
     state_dir = working_dir / ".swarmforge" / workflow
     return ProjectPaths(
         working_dir=working_dir,
         script_path=script_path,
+        project_id=project_id,
         workflow=workflow,
         swarmforge_dir=swarmforge_dir,
         worktrees_dir=working_dir / ".worktrees" / workflow,
@@ -289,7 +292,7 @@ You verify quality and correctness.
         check_dependency("git")
         initialize_git_repo(working_dir)
 
-    print(f"{GREEN}SwarmPy workflow initialized:{RESET} {working_dir} [{paths.workflow}]")
+    print(f"{GREEN}SwarmPy workflow initialized:{RESET} {working_dir} [{paths.project_id}/{paths.workflow}]")
     if created:
         print("Created:")
         for path in created:
@@ -309,8 +312,8 @@ def display_name_for_role(role: str) -> str:
     return " ".join(part.capitalize() for part in role.replace("-", " ").replace("_", " ").split())
 
 
-def session_name_for_workflow(workflow: str) -> str:
-    return f"swarmpy-{workflow}"
+def session_name_for_workflow(project_id: str, workflow: str) -> str:
+    return f"swarmpy-{project_id}-{workflow}"
 
 
 def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
@@ -361,7 +364,7 @@ def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
                 role=role,
                 agent=agent,
                 worktree_name=worktree_name,
-                session=session_name_for_workflow(paths.workflow),
+                session=session_name_for_workflow(paths.project_id, paths.workflow),
                 window=role,
                 display=display_name_for_role(role),
                 worktree_path=worktree_path,
@@ -412,7 +415,7 @@ def prepare_worktrees(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
             continue
         if (config.worktree_path / ".git").exists():
             continue
-        branch_name = f"swarmpy-{paths.workflow}-{config.worktree_name}"
+        branch_name = f"swarmpy-{paths.project_id}-{paths.workflow}-{config.worktree_name}"
         run(
             [
                 "git",
@@ -596,6 +599,7 @@ def launch(working_dir_arg: str, workflow: str = "default", worktree: str | None
     print()
     print(f"{GREEN}{BOLD}SwarmForge is ready.{RESET}")
     print(f"Working directory: {paths.working_dir}")
+    print(f"Project id: {paths.project_id}")
     print(f"Workflow: {paths.workflow}")
     if worktree:
         print(f"Workflow worktree: {paths.worktrees_dir / clean_name(worktree)}")
