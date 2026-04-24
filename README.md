@@ -17,17 +17,38 @@ The goal is intentionally boring:
 - `git`
 - optional agent CLIs depending on config: `claude`, `codex`
 
-## Usage
+## Install global CLI
+
+Install the global `swarmpy` command once:
+
+```bash
+uv run --script swarm.py install
+```
+
+This creates a symlink:
+
+```text
+~/.local/bin/swarmpy -> /path/to/swarm.py
+```
+
+Make sure `~/.local/bin` is in your `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then use:
+
+```bash
+swarmpy --help
+swarmpy init /path/to/project
+swarmpy launch /path/to/project
+```
+
+Without installing, you can still run:
 
 ```bash
 uv run --script swarm.py [WORKING_DIR]
-```
-
-or:
-
-```bash
-chmod +x swarm.py
-./swarm.py [WORKING_DIR]
 ```
 
 If `WORKING_DIR` is omitted, the current directory is used.
@@ -77,19 +98,20 @@ Worktree behavior:
 Show top-level help:
 
 ```bash
-uv run --script swarm.py --help
+swarmpy --help
 ```
 
 Show help for a command:
 
 ```bash
-uv run --script swarm.py help notify
-uv run --script swarm.py cleanup --help
+swarmpy help notify
+swarmpy cleanup --help
 ```
 
 Commands:
 
 ```text
+install   install the global `swarmpy` command
 init      create swarmforge config and role prompt scaffolding
 launch    start the configured swarm
 notify    send a message to a role, index, or tmux session
@@ -102,7 +124,7 @@ cleanup   kill swarm tmux sessions
 Create the project wiring/scaffolding:
 
 ```bash
-uv run --script swarm.py init /path/to/project
+swarmpy init /path/to/project
 ```
 
 This creates:
@@ -120,45 +142,45 @@ It also initializes git for a new project and adds SwarmPy runtime paths to `.gi
 Launch:
 
 ```bash
-uv run --script swarm.py /path/to/project
+swarmpy /path/to/project
 # or
-uv run --script swarm.py launch /path/to/project
+swarmpy launch /path/to/project
 ```
 
 List sessions:
 
 ```bash
-uv run --script swarm.py sessions -p /path/to/project
+swarmpy sessions -p /path/to/project
 ```
 
 Attach to a role:
 
 ```bash
-uv run --script swarm.py attach coder -p /path/to/project
+swarmpy attach coder -p /path/to/project
 ```
 
 Notify an agent:
 
 ```bash
-uv run --script swarm.py notify coder "Please implement the next slice." -p /path/to/project
+swarmpy notify coder "Please implement the next slice." -p /path/to/project
 ```
 
 Append to swarm log:
 
 ```bash
-uv run --script swarm.py log reviewer "Review started." -p /path/to/project
+swarmpy log reviewer "Review started." -p /path/to/project
 ```
 
 Cleanup all sessions for a project:
 
 ```bash
-uv run --script swarm.py cleanup -p /path/to/project
+swarmpy cleanup -p /path/to/project
 ```
 
 Cleanup explicit sessions:
 
 ```bash
-uv run --script swarm.py cleanup swarmforge-architect swarmforge-coder swarmforge-reviewer
+swarmpy cleanup swarmforge-architect swarmforge-coder swarmforge-reviewer
 ```
 
 ## Runtime files in the managed project

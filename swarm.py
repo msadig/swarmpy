@@ -136,6 +136,46 @@ def write_scaffold_file(path: Path, content: str, force: bool) -> bool:
     return True
 
 
+def command_for_agents(paths: ProjectPaths) -> str:
+    return "swarmpy" if shutil.which("swarmpy") else f"uv run --script {q(paths.script_path)}"
+
+
+def install_cli(bin_dir_arg: str | None, force: bool = False) -> None:
+    bin_dir = Path(bin_dir_arg or "~/.local/bin").expanduser().resolve()
+    source = Path(__file__).expanduser().resolve()
+    target = bin_dir / "swarmpy"
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    source.chmod(source.stat().st_mode | 0o111)
+
+    if target.exists() or target.is_symlink():
+        try:
+            already_installed = target.resolve() == source
+        except OSError:
+            already_installed = False
+
+        if already_installed:
+            print(f"{GREEN}swarmpy is already installed:{RESET} {target}")
+            return
+        if not force:
+            fail(f"{target} already exists. Re-run with --force to replace it.")
+        if target.is_dir() and not target.is_symlink():
+            fail(f"{target} is a directory; cannot replace it.")
+        target.unlink()
+
+    target.symlink_to(source)
+    print(f"{GREEN}Installed global command:{RESET} {target} -> {source}")
+
+    path_entries = [Path(p).expanduser().resolve() for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    if bin_dir not in path_entries:
+        print(f"{YELLOW}Note:{RESET} {bin_dir} is not currently in PATH.")
+        print(f"Add this to your shell config:")
+        print(f"  export PATH=\"{bin_dir}:$PATH\"")
+    else:
+        print("Try:")
+        print("  swarmpy --help")
+
+
 def init_project(working_dir_arg: str, force: bool = False) -> None:
     working_dir = Path(working_dir_arg).expanduser().resolve()
     working_dir.mkdir(parents=True, exist_ok=True)
@@ -158,7 +198,7 @@ Every agent must follow these rules:
 2. Read your role prompt in `swarmforge/<role>.prompt`.
 3. Make small, reviewable changes.
 4. Keep tests, linting, and project checks green.
-5. Communicate through `swarm.py notify <role-or-index> "message"` and `swarm.py log <role> "message"`.
+5. Communicate through `swarmpy notify <role-or-index> "message"` and `swarmpy log <role> "message"`.
 
 Project-specific rules belong here. Keep them short and explicit.
 """,
@@ -217,7 +257,7 @@ You verify quality and correctness.
     print()
     print("Next steps:")
     print(f"  1. Edit {paths.config_file.relative_to(working_dir)} and prompt files as needed")
-    print(f"  2. Start the swarm: uv run --script {paths.script_path} launch {working_dir}")
+    print(f"  2. Start the swarm: {command_for_agents(paths)} launch {working_dir}")
 
 
 def display_name_for_role(role: str) -> str:
@@ -364,8 +404,8 @@ def write_agent_instruction_file(paths: ProjectPaths, role: str) -> Path:
     prompt_file.write_text(
         f"Read swarmforge/constitution.prompt, then read every file it refers to recursively, and obey all of those instructions.\n"
         f"Read swarmforge/{role}.prompt, then read every file it refers to recursively, and follow all of those instructions.\n"
-        f"To notify another role, run: uv run --script {paths.script_path} notify <role-or-index> '<message>'\n"
-        f"To write a swarm log entry, run: uv run --script {paths.script_path} log {role} '<message>'\n"
+        f"To notify another role, run: {command_for_agents(paths)} notify <role-or-index> '<message>'\n"
+        f"To write a swarm log entry, run: {command_for_agents(paths)} log {role} '<message>'\n"
     )
     return prompt_file
 
@@ -375,7 +415,7 @@ def script_command(paths: ProjectPaths) -> str:
 
 
 def base_environment_command(paths: ProjectPaths) -> str:
-    return f"export SWARMFORGE_PROJECT_DIR={q(paths.working_dir)} SWARMFORGE_SCRIPT={q(paths.script_path)}"
+    return f"export SWARMFORGE_PROJECT_DIR={q(paths.working_dir)} SWARMPY={q(command_for_agents(paths))} SWARMFORGE_SCRIPT={q(paths.script_path)}"
 
 
 def choose_cleanup_owner(configs: list[WindowConfig]) -> int | None:
@@ -475,7 +515,7 @@ def launch(working_dir_arg: str) -> None:
     for config in configs:
         print(f"  {config.display}: {config.session}")
     print()
-    print(f"{GREEN}Tip: Notify with: uv run --script {paths.script_path} notify <role-or-index> \"message\"{RESET}")
+    print(f"{GREEN}Tip: Notify with: {command_for_agents(paths)} notify <role-or-index> \"message\"{RESET}")
     print(f"{GREEN}Tip: Reattach with 'tmux attach-session -t <session-name>'.{RESET}")
     if cleanup_owner is not None:
         owner = next(c for c in configs if c.index == cleanup_owner)
@@ -587,16 +627,17 @@ def add_project_arg(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     examples = """
 examples:
-  swarm.py init ~/code/my-project
-  swarm.py launch ~/code/my-project
-  swarm.py sessions -p ~/code/my-project
-  swarm.py attach coder -p ~/code/my-project
-  swarm.py notify reviewer "Please review the latest changes" -p ~/code/my-project
-  swarm.py log architect "Plan updated" -p ~/code/my-project
-  swarm.py cleanup -p ~/code/my-project
+  swarmpy install
+  swarmpy init ~/code/my-project
+  swarmpy launch ~/code/my-project
+  swarmpy sessions -p ~/code/my-project
+  swarmpy attach coder -p ~/code/my-project
+  swarmpy notify reviewer "Please review the latest changes" -p ~/code/my-project
+  swarmpy log architect "Plan updated" -p ~/code/my-project
+  swarmpy cleanup -p ~/code/my-project
 """
     parser = argparse.ArgumentParser(
-        prog="swarm.py",
+        prog=Path(sys.argv[0]).name,
         description="Single-file Python/uv SwarmForge runner using tmux sessions and git worktrees.",
         epilog=examples,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -604,6 +645,10 @@ examples:
     parser.set_defaults(command="launch")
 
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    install_parser = subparsers.add_parser("install", help="install the global 'swarmpy' command")
+    install_parser.add_argument("--bin-dir", default="~/.local/bin", help="directory for the swarmpy symlink, default: ~/.local/bin")
+    install_parser.add_argument("--force", action="store_true", help="replace an existing swarmpy command")
 
     init_parser = subparsers.add_parser("init", help="create swarmforge config and role prompt scaffolding")
     init_parser.add_argument("working_dir", nargs="?", default=os.getcwd(), help="project directory, default: current directory")
@@ -645,14 +690,16 @@ def main(argv: list[str] | None = None) -> None:
     if argv and argv[0] == "help":
         argv = ["--help"] if len(argv) == 1 else [argv[1], "--help"]
 
-    commands = {"init", "launch", "notify", "log", "sessions", "attach", "cleanup"}
+    commands = {"install", "init", "launch", "notify", "log", "sessions", "attach", "cleanup"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         argv = ["launch", *argv]
 
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "init":
+    if args.command == "install":
+        install_cli(args.bin_dir, args.force)
+    elif args.command == "init":
         init_project(args.working_dir, args.force)
     elif args.command == "launch":
         launch(args.working_dir if hasattr(args, "working_dir") else os.getcwd())
