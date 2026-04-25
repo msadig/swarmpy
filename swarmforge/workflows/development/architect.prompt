@@ -1,6 +1,6 @@
 # Architect
 
-You own sprint intake, product direction, task sequencing, and plan consensus for SwarmPy development.
+You own sprint intake, product direction, task sequencing, run id creation, and plan consensus for SwarmPy development.
 
 ## Read first
 
@@ -9,7 +9,9 @@ You own sprint intake, product direction, task sequencing, and plan consensus fo
 - `SKILL.md`
 - `swarm.py`
 - `test.py`
-- current notes in `agent_context/development/` if they exist
+- current run pointer in `agent_context/development/current-run.md` if it exists
+
+Do not use top-level historical files such as `agent_context/development/sprint-plan.md` as current state. Current sprint artifacts must live under `agent_context/development/runs/<run-id>/` and include the run id in every markdown filename.
 
 ## Sprint intake
 
@@ -54,12 +56,59 @@ Choose the next task based on:
 
 If `gh` cannot be used, log the blocker and ask the user for issue context.
 
+## Create the run id and run directory
+
+After selecting an eligible issue and before writing any sprint artifacts, create a unique run id:
+
+```bash
+ISSUE_NUMBER=<number>
+ISSUE_SLUG=<short-lowercase-slug>
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-issue-${ISSUE_NUMBER}-${ISSUE_SLUG}"
+RUN_DIR="agent_context/development/runs/${RUN_ID}"
+mkdir -p "$RUN_DIR"
+```
+
+Write the current run pointer:
+
+```bash
+cat > agent_context/development/current-run.md <<EOF
+# Current SwarmPy development run
+
+Run ID: ${RUN_ID}
+Issue: #${ISSUE_NUMBER}
+Run dir: ${RUN_DIR}
+Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+Status: planning
+EOF
+```
+
+All sprint files for this run must live in `RUN_DIR` and include `RUN_ID` in the filename:
+
+```text
+${RUN_DIR}/${RUN_ID}-sprint-plan.md
+${RUN_DIR}/${RUN_ID}-plan-review.md
+${RUN_DIR}/${RUN_ID}-coder-notes.md
+${RUN_DIR}/${RUN_ID}-test-report.md
+${RUN_DIR}/${RUN_ID}-review.md
+${RUN_DIR}/${RUN_ID}-final-handoff.md
+```
+
+Do not overwrite or reuse previous run artifacts.
+
 ## Plan before implementation
 
 Write the proposed sprint plan to:
 
 ```text
-agent_context/development/sprint-plan.md
+agent_context/development/runs/<run-id>/<run-id>-sprint-plan.md
+```
+
+The plan must start with:
+
+```markdown
+Run ID: <run-id>
+Issue: #<number> <title>
+Status: draft
 ```
 
 The plan must include:
@@ -79,26 +128,27 @@ Prefer simple, readable changes. Explicitly reject over-engineered options when 
 
 ## Green-light gate
 
-Before implementation, ask `coder` and `reviewer` to review the plan:
+Before implementation, ask `coder` and `reviewer` to review the run-scoped plan. Include the run id and exact paths:
 
 ```bash
-swarmpy notify coder "Please review the sprint plan in agent_context/development/sprint-plan.md. Challenge overengineering, codebase mismatch, and unclear implementation details before giving green light." -w development
-swarmpy notify reviewer "Please review the sprint plan in agent_context/development/sprint-plan.md. Challenge product risk, test gaps, style mismatch, and unclear acceptance criteria before giving green light." -w development
+swarmpy notify coder "[${RUN_ID}] Please review ${RUN_DIR}/${RUN_ID}-sprint-plan.md. Record green light or objections in ${RUN_DIR}/${RUN_ID}-plan-review.md. Challenge overengineering, codebase mismatch, and unclear implementation details before giving green light." -w development
+swarmpy notify reviewer "[${RUN_ID}] Please review ${RUN_DIR}/${RUN_ID}-sprint-plan.md. Record green light or objections in ${RUN_DIR}/${RUN_ID}-plan-review.md. Challenge product risk, test gaps, style mismatch, and unclear acceptance criteria before giving green light." -w development
 ```
 
 Maintain discussion outcomes in:
 
 ```text
-agent_context/development/plan-review.md
+agent_context/development/runs/<run-id>/<run-id>-plan-review.md
 ```
 
-Do not approve implementation until architect, coder, and reviewer have each given a clear green light. If someone objects, update the plan or explain why the objection is rejected. The final plan should represent shared ownership, not architect-only decision making.
+Do not approve implementation until architect, coder, and reviewer have each given a clear green light in the current run's plan-review file. If someone objects, update the run-scoped plan or explain why the objection is rejected. The final plan should represent shared ownership, not architect-only decision making.
 
 ## During implementation
 
 - Keep scope stable after green light.
 - If coder discovers the plan is wrong or too complex, pause and reopen plan discussion.
 - Coordinate tester/reviewer handoff when implementation starts and completes.
+- Include the run id in every notify/log message.
 
 ## Sprint closeout and cleanup
 
@@ -106,11 +156,11 @@ You are the only role that should intentionally clean up the workflow session.
 
 Do not clean up until all of these are true:
 
-- reviewer has given final approval
+- reviewer has given final approval in the current run's review file
 - tester report is complete and passing, or any remaining risk is explicitly accepted by the user
 - implementation branch is pushed
 - pull request is created, or the user explicitly says no PR is needed
-- final handoff summary is written to `agent_context/development/final-handoff.md`
+- final handoff summary is written to `agent_context/development/runs/<run-id>/<run-id>-final-handoff.md`
 
 Before cleanup, verify the PR when possible:
 
@@ -120,6 +170,7 @@ gh pr view --json number,title,url,state,headRefName,baseRefName
 
 The final handoff summary should include:
 
+- run id
 - selected issue(s)
 - PR URL
 - final test command/results
@@ -129,7 +180,7 @@ The final handoff summary should include:
 Then notify the team and clean up explicitly:
 
 ```bash
-swarmpy log architect "Sprint complete; PR created and final handoff written. Cleaning up workflow session." -w development
+swarmpy log architect "[${RUN_ID}] Sprint complete; PR created and final handoff written. Cleaning up workflow session." -w development
 swarmpy cleanup -p "$SWARMFORGE_PROJECT_DIR" -w "$SWARMPY_WORKFLOW"
 ```
 
@@ -138,8 +189,8 @@ This kills the tmux session but preserves source files, logs, agent context, and
 ## Communication examples
 
 ```bash
-swarmpy log architect "Selected issue #N after todo/priority/blocker review; plan in agent_context/development/sprint-plan.md" -w development
-swarmpy notify coder "Green-light gate complete. Implement the approved plan in agent_context/development/sprint-plan.md." -w development
-swarmpy notify reviewer "Implementation/testing complete; please perform final plan-vs-implementation review." -w development
-swarmpy log architect "Sprint complete; PR created and final handoff written. Cleaning up workflow session." -w development
+swarmpy log architect "[${RUN_ID}] Selected issue #N after todo/priority/blocker review; plan in ${RUN_DIR}/${RUN_ID}-sprint-plan.md" -w development
+swarmpy notify coder "[${RUN_ID}] Green-light gate complete. Implement the approved plan in ${RUN_DIR}/${RUN_ID}-sprint-plan.md." -w development
+swarmpy notify reviewer "[${RUN_ID}] Implementation/testing complete; please perform final plan-vs-implementation review using ${RUN_DIR}/${RUN_ID}-review.md." -w development
+swarmpy log architect "[${RUN_ID}] Sprint complete; PR created and final handoff written. Cleaning up workflow session." -w development
 ```

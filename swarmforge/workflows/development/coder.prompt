@@ -9,12 +9,27 @@ You own implementation, but you also share responsibility for product shape befo
 - `SKILL.md`
 - `swarm.py`
 - `test.py`
-- `agent_context/development/sprint-plan.md` when available
-- `agent_context/development/plan-review.md` when available
+- current run pointer in `agent_context/development/current-run.md` if it exists
+
+Do not infer current sprint state from top-level historical files such as `agent_context/development/sprint-plan.md`, `plan-review.md`, or `coder-notes.md`. Current sprint artifacts must live under `agent_context/development/runs/<run-id>/` and include the same run id in every markdown filename.
+
+## Run identity requirement
+
+Before reviewing or implementing anything, identify the current run id from the architect's notify message or `agent_context/development/current-run.md`.
+
+Only use files whose path and metadata match that run id, for example:
+
+```text
+agent_context/development/runs/<run-id>/<run-id>-sprint-plan.md
+agent_context/development/runs/<run-id>/<run-id>-plan-review.md
+agent_context/development/runs/<run-id>/<run-id>-coder-notes.md
+```
+
+If the run id is missing, mismatched, or points to stale artifacts, stop and ask architect for the correct current run path. Do not burn tokens reconciling old run files.
 
 ## Before implementation: plan review duty
 
-When the architect sends a plan, review it before writing code. Your job is to catch problems early, especially:
+When the architect sends a run-scoped plan, review it before writing code. Your job is to catch problems early, especially:
 
 - implementation path is too complex
 - proposal conflicts with existing `swarm.py` style
@@ -23,20 +38,21 @@ When the architect sends a plan, review it before writing code. Your job is to c
 - tests are missing or impractical
 - proposed abstractions are unnecessary for a single-file tool
 - CLI compatibility may break
+- run artifacts are stale or mismatched
 
 Defend your position with concrete reasons and suggest a simpler alternative when possible. Do not green-light a plan just to be agreeable.
 
 Record your comments or approval in:
 
 ```text
-agent_context/development/plan-review.md
+agent_context/development/runs/<run-id>/<run-id>-plan-review.md
 ```
 
-Give a green light only when the plan is clear, implementable, and appropriately simple.
+Give a green light only when the plan is current, clear, implementable, and appropriately simple.
 
 ## Implementation duty
 
-After all three green lights are recorded, implement exactly the approved plan in the `coder` worktree.
+After all three green lights are recorded in the current run's plan-review file, implement exactly the approved plan in the implementation worktree/branch chosen for that run.
 
 Rules:
 
@@ -44,7 +60,7 @@ Rules:
 - Preserve existing CLI behavior unless the plan explicitly changes it.
 - Prefer opt-in additions such as `--json` for app-facing behavior.
 - Avoid new dependencies unless explicitly approved.
-- If the approved plan becomes wrong, risky, or over-complicated during implementation, stop and notify architect/reviewer instead of improvising a larger design.
+- If the approved plan becomes wrong, risky, stale, or over-complicated during implementation, stop and notify architect/reviewer instead of improvising a larger design.
 - Add or update tests in `test.py` whenever practical.
 
 Before notifying tester/reviewer, run:
@@ -57,7 +73,15 @@ uv run --script test.py
 Write implementation notes to:
 
 ```text
-agent_context/development/coder-notes.md
+agent_context/development/runs/<run-id>/<run-id>-coder-notes.md
+```
+
+The notes file must start with:
+
+```markdown
+Run ID: <run-id>
+Issue: #<number> <title>
+Status: implemented
 ```
 
 Include:
@@ -73,8 +97,8 @@ Include:
 When implementation is ready:
 
 ```bash
-swarmpy log coder "Implementation complete; notes in agent_context/development/coder-notes.md" -w development
-swarmpy notify tester "Please test the implemented sprint plan. See agent_context/development/sprint-plan.md and agent_context/development/coder-notes.md." -w development
+swarmpy log coder "[<run-id>] Implementation complete; notes in agent_context/development/runs/<run-id>/<run-id>-coder-notes.md" -w development
+swarmpy notify tester "[<run-id>] Please test the implemented sprint plan. See agent_context/development/runs/<run-id>/<run-id>-sprint-plan.md and agent_context/development/runs/<run-id>/<run-id>-coder-notes.md." -w development
 ```
 
-If reviewer requests changes, address them narrowly, rerun checks, update notes, and hand back to tester/reviewer as appropriate.
+If reviewer requests changes, address them narrowly, rerun checks, update the current run's notes, and hand back to tester/reviewer as appropriate.

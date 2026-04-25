@@ -22,10 +22,10 @@ Core project files:
 - `swarm.py`
 - `test.py`
 
-Shared sprint artifacts normally live under:
+Shared sprint artifacts live under run-scoped directories in:
 
 ```text
-agent_context/development/
+agent_context/development/runs/<run-id>/
 ```
 
 Do not edit generated/runtime paths:
@@ -34,6 +34,57 @@ Do not edit generated/runtime paths:
 - `.worktrees/`
 - `logs/`
 - generated prompt files under `.swarmforge/<workflow>/prompts/`
+
+## Run-scoped context rule
+
+Every sprint/run must have a unique run id. The run id prevents agents from accidentally reading stale plans, reviews, or reports from previous sessions.
+
+Required run id format:
+
+```text
+YYYYMMDDTHHMMSSZ-issue-<number>-<short-slug>
+```
+
+Example:
+
+```text
+20260426T023100Z-issue-1-inspect-json
+```
+
+All sprint markdown artifacts must live under:
+
+```text
+agent_context/development/runs/<run-id>/
+```
+
+Every sprint markdown filename must include the run id, for example:
+
+```text
+agent_context/development/runs/<run-id>/<run-id>-sprint-plan.md
+agent_context/development/runs/<run-id>/<run-id>-plan-review.md
+agent_context/development/runs/<run-id>/<run-id>-coder-notes.md
+agent_context/development/runs/<run-id>/<run-id>-test-report.md
+agent_context/development/runs/<run-id>/<run-id>-review.md
+agent_context/development/runs/<run-id>/<run-id>-final-handoff.md
+```
+
+Every sprint markdown file must also start with a short metadata block containing at least:
+
+```markdown
+Run ID: <run-id>
+Issue: #<number> <title>
+Status: <draft|plan-review|implementing|testing|review|complete>
+```
+
+Top-level files such as `agent_context/development/sprint-plan.md`, `plan-review.md`, `coder-notes.md`, `test-report.md`, `review.md`, and `final-handoff.md` are historical/stale compatibility artifacts. Do not treat them as current sprint state.
+
+The current run pointer is:
+
+```text
+agent_context/development/current-run.md
+```
+
+Agents may use this file only to discover the current run id and run directory. They must still verify that every artifact they read has the same run id in its filename and metadata block. If the run id is missing or mismatched, stop and ask the architect for the correct current-run path.
 
 ## Standard sprint gates
 
@@ -49,13 +100,13 @@ A task is eligible for a new sprint only if all of these are true:
 
 A related open pull request means the issue is already implemented or actively in progress. Do not start a new sprint for that issue. Pick another eligible issue, or ask the user if no eligible issue exists.
 
-### 2. Written plan before implementation
+### 2. Written run-scoped plan before implementation
 
-Before implementation, there must be a markdown plan in the shared sprint context. The plan should define the problem, selected task, eligibility check, proposed solution, rejected alternatives, likely files to change, testing strategy, risks, rollback considerations, and acceptance criteria.
+Before implementation, there must be a markdown plan in the current run directory. The plan should define the run id, problem, selected task, eligibility check, proposed solution, rejected alternatives, likely files to change, testing strategy, risks, rollback considerations, and acceptance criteria.
 
 ### 3. Consensus before coding
 
-Implementation should not begin until the planning, coding, and review perspectives have all given a clear green light.
+Implementation should not begin until the planning, coding, and review perspectives have all given a clear green light in the current run's plan-review file.
 
 During plan review, agents should actively challenge:
 
@@ -66,26 +117,27 @@ During plan review, agents should actively challenge:
 - risky migration or compatibility paths
 - missing or weak tests
 - scope that is too large for one sprint
+- stale or mismatched run artifacts
 
 Each objection should include a reason and, when possible, a simpler alternative. The plan should be updated until the team reaches explicit consensus.
 
 ### 4. Focused implementation
 
-After consensus, implementation must follow the agreed plan. If the plan becomes wrong, unclear, or too complex during implementation, pause and reopen discussion instead of silently expanding scope.
+After consensus, implementation must follow the agreed plan for the current run id. If the plan becomes wrong, unclear, too complex, or stale/mismatched during implementation, pause and reopen discussion instead of silently expanding scope.
 
 ### 5. Testing before final review
 
-Implementation must be verified before final review. Add or update regression tests when practical. Manual verification is acceptable only when automated coverage is impractical or outside the slice.
+Implementation must be verified before final review. Add or update regression tests when practical. Manual verification is acceptable only when automated coverage is impractical or outside the slice. Test results must be written to the current run's test-report file.
 
 ### 6. Final review loop
 
-Final review compares the agreed plan with the implemented behavior and tests. If anything is wrong, request precise changes and repeat implementation/testing/review rounds until the result is clean and accepted.
+Final review compares the agreed run-scoped plan with the implemented behavior and tests. If anything is wrong, request precise changes and repeat implementation/testing/review rounds until the result is clean and accepted.
 
 ### 7. PR and cleanup gate
 
-A sprint is not complete until the work has a pull request or the user explicitly says no PR is needed. Before cleanup, the final shared context should include the PR URL, final test status, final review status, and any follow-up issues.
+A sprint is not complete until the work has a pull request or the user explicitly says no PR is needed. Before cleanup, the current run directory should include the PR URL, final test status, final review status, and any follow-up issues.
 
-Only the architect should trigger workflow cleanup. Cleanup should happen after the reviewer has approved the final implementation, the PR is created or confirmed, and the architect has logged a final handoff summary.
+Only the architect should trigger workflow cleanup. Cleanup should happen after the reviewer has approved the final implementation, the PR is created or confirmed, and the architect has logged a final handoff summary in the current run's final-handoff file.
 
 Cleanup kills the tmux workflow session. It does not delete source files, logs, agent context, or worktrees.
 
@@ -102,11 +154,11 @@ Update or add tests in `test.py` for behavior changes whenever practical.
 
 ## Communication
 
-Use SwarmPy communication commands for status, handoff, objections, and approvals:
+Use SwarmPy communication commands for status, handoff, objections, and approvals. Include the run id and exact artifact paths in handoff messages:
 
 ```bash
-swarmpy notify <role-or-index> "message" -w development
-swarmpy log <role> "message" -w development
+swarmpy notify <role-or-index> "[<run-id>] message; see agent_context/development/runs/<run-id>/<run-id>-sprint-plan.md" -w development
+swarmpy log <role> "[<run-id>] message" -w development
 ```
 
 If working from a role worktree, the canonical project root is available as `$SWARMFORGE_PROJECT_DIR`.
