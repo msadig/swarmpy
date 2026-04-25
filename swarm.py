@@ -905,6 +905,100 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         print(f"{marker} {dep['name']:<8} {tag:<8} {location}{version}")
 
 
+def _inspect_running(session: str) -> bool:
+    # Tmux fallback scoped to inspect: a missing tmux binary should not crash
+    # the app-facing inspect output. Treat "tmux not on PATH" as "not running".
+    # tmux_has_session and cmd_sessions are intentionally NOT modified; this
+    # fallback is local to inspect so app-discovery flows still get a JSON
+    # payload on machines where tmux has not yet been installed.
+    try:
+        return tmux_has_session(session)
+    except (OSError, FileNotFoundError):
+        return False
+
+
+def cmd_inspect(args: argparse.Namespace) -> None:
+    paths = resolve_project_paths(args.project, args.workflow)
+    session = session_name_for_workflow(paths.project_id, paths.workflow)
+    project_payload = {"id": paths.project_id, "path": str(paths.working_dir)}
+
+    error: str | None = None
+    if not paths.config_file.is_file():
+        error = f"Config not found at {paths.config_file}"
+    elif not paths.constitution_file.is_file():
+        error = f"Constitution prompt not found at {paths.constitution_file}"
+
+    if error is not None:
+        if args.json:
+            _emit_json(
+                {
+                    "ok": False,
+                    "project": project_payload,
+                    "workflow": {"name": paths.workflow, "session": session},
+                    "error": error,
+                }
+            )
+            raise SystemExit(1)
+        fail(error)
+
+    configs = parse_config(paths)
+    running = _inspect_running(session)
+
+    workflow_payload = {
+        "name": paths.workflow,
+        "session": session,
+        "running": running,
+        "config_file": str(paths.config_file),
+        "settings_file": str(paths.settings_file),
+        "constitution_file": str(paths.constitution_file),
+        "state_dir": str(paths.state_dir),
+        "logs_dir": str(paths.logs_dir),
+    }
+    roles_payload = [
+        {
+            "index": config.index,
+            "role": config.role,
+            "agent": config.agent,
+            "worktree": config.worktree_name,
+            "worktree_path": str(config.worktree_path),
+            "window": config.window,
+            "target": f"{session}:{config.window}",
+            "running": running,
+            "prompt_file": str(paths.swarmforge_dir / f"{config.role}.prompt"),
+            "pane_log": str(pane_log_path(paths, config.role)),
+        }
+        for config in configs
+    ]
+    message_log = paths.logs_dir / "agent_messages.log"
+
+    if args.json:
+        _emit_json(
+            {
+                "ok": True,
+                "project": project_payload,
+                "workflow": workflow_payload,
+                "roles": roles_payload,
+                "message_log": str(message_log),
+            }
+        )
+        return
+
+    running_label = "running" if running else "stopped"
+    print(f"Inspect workflow: {paths.working_dir} [{paths.workflow}]")
+    print(f"  session: {session} ({running_label})")
+    print(f"  config:  {paths.config_file}")
+    print(f"  state:   {paths.state_dir}")
+    print(f"  logs:    {paths.logs_dir}")
+    print()
+    print("Roles:")
+    for role in roles_payload:
+        worktree_col = role["worktree"]
+        if worktree_col not in SHARED_WORKTREE_NAMES:
+            rel = Path(role["worktree_path"]).relative_to(paths.working_dir)
+            worktree_col = f"{role['worktree']} ({rel})"
+        print(f"  {role['index']}. {role['role']:<14} {role['agent']:<6} {worktree_col:<48} {role['target']} ({running_label})")
+
+
 def cmd_attach(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
     rows = read_sessions(paths.sessions_file)
@@ -1025,6 +1119,11 @@ examples:
     add_workflow_arg(doctor_parser)
     doctor_parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
+    inspect_parser = subparsers.add_parser("inspect", help="report configured workflow shape and runtime status")
+    add_project_arg(inspect_parser)
+    add_workflow_arg(inspect_parser)
+    inspect_parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
     return parser
 
 
@@ -1037,7 +1136,7 @@ def main(argv: list[str] | None = None) -> None:
     if argv and argv[0] == "help":
         argv = ["--help"] if len(argv) == 1 else [argv[1], "--help"]
 
-    commands = {"install", "init", "launch", "notify", "log", "logs", "sessions", "workflows", "attach", "cleanup", "doctor"}
+    commands = {"install", "init", "launch", "notify", "log", "logs", "sessions", "workflows", "attach", "cleanup", "doctor", "inspect"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         argv = ["launch", *argv]
 
@@ -1066,6 +1165,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_cleanup(args)
     elif args.command == "doctor":
         cmd_doctor(args)
+    elif args.command == "inspect":
+        cmd_inspect(args)
     else:
         parser.print_help()
 

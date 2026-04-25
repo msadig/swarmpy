@@ -260,10 +260,11 @@ swarmpy sessions -p "$PROJECT" -w "$WORKFLOW"
 swarmpy sessions -p "$PROJECT" -w "$WORKFLOW" --json
 ```
 
-`--json` is the agent-friendly form — it emits a stable schema on stdout for both commands:
+`--json` is the agent-friendly form — it emits a stable schema on stdout for `workflows`, `sessions`, `doctor`, and `inspect`:
 
 - `workflows --json` → `{ "project", "workflows": [{ "name", "path", "config_file" }] }`. Exits 0 even when empty.
 - `sessions --json` → `{ "project", "workflow", "sessions": [{ "index", "role", "session", "window", "target", "display", "agent", "running" }] }`. If `sessions.tsv` is missing, the same JSON shape is printed with an extra `error` field and the process exits 1 — branch on `error`, not on stderr.
+- `doctor --json` / `inspect --json` → top-level `ok: true|false`; on `ok: false` the payload includes a single string `error` key and exit code is 1. `inspect --json` also emits `project`, `workflow`, `roles[]`, and `message_log` on success.
 
 Attach to a role window:
 
