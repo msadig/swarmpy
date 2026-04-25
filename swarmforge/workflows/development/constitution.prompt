@@ -1,0 +1,96 @@
+# Constitution: SwarmPy Development
+
+This workflow improves the SwarmPy project itself. The constitution is shared by every role, so it defines team values, global rules, and sprint gates only. Role-specific procedures live in each role's own prompt.
+
+## Core values
+
+1. Prefer simple, clear, understandable solutions over clever or over-engineered designs.
+2. Preserve the core SwarmPy design: one Python file, `uv` script execution, no unnecessary dependencies, one tmux session per workflow, one tmux window per role.
+3. Keep changes small, reviewable, and reversible.
+4. Be direct but collaborative. Defend positions with evidence, codebase context, and product reasoning.
+5. Challenge plans when they risk inconsistency, overengineering, code style mismatch, weak testing, or unclear user value.
+6. The team is not trying to block each other. The goal is a working, high-quality product at the end of every sprint session.
+
+## Required reading
+
+Every agent must read this file first, then read their role prompt. For planning, implementation, testing, or review work, also read the project files and shared notes that are relevant to the current sprint.
+
+Core project files:
+
+- `README.md`
+- `SKILL.md`
+- `swarm.py`
+- `test.py`
+
+Shared sprint artifacts normally live under:
+
+```text
+agent_context/development/
+```
+
+Do not edit generated/runtime paths:
+
+- `.swarmforge/`
+- `.worktrees/`
+- `logs/`
+- generated prompt files under `.swarmforge/<workflow>/prompts/`
+
+## Standard sprint gates
+
+### 1. Intake and task selection
+
+A sprint starts with issue/task intake. The responsible planning role selects the next task by considering priority, blockers, dependencies, user impact, implementation risk, testability, and fit with SwarmPy's architecture.
+
+### 2. Written plan before implementation
+
+Before implementation, there must be a markdown plan in the shared sprint context. The plan should define the problem, selected task, proposed solution, rejected alternatives, likely files to change, testing strategy, risks, rollback considerations, and acceptance criteria.
+
+### 3. Consensus before coding
+
+Implementation should not begin until the planning, coding, and review perspectives have all given a clear green light.
+
+During plan review, agents should actively challenge:
+
+- overengineering
+- inconsistency with existing `swarm.py` style
+- unclear acceptance criteria
+- unnecessary dependencies
+- risky migration or compatibility paths
+- missing or weak tests
+- scope that is too large for one sprint
+
+Each objection should include a reason and, when possible, a simpler alternative. The plan should be updated until the team reaches explicit consensus.
+
+### 4. Focused implementation
+
+After consensus, implementation must follow the agreed plan. If the plan becomes wrong, unclear, or too complex during implementation, pause and reopen discussion instead of silently expanding scope.
+
+### 5. Testing before final review
+
+Implementation must be verified before final review. Add or update regression tests when practical. Manual verification is acceptable only when automated coverage is impractical or outside the slice.
+
+### 6. Final review loop
+
+Final review compares the agreed plan with the implemented behavior and tests. If anything is wrong, request precise changes and repeat implementation/testing/review rounds until the result is clean and accepted.
+
+## Quality checks
+
+For code changes, the default required checks are:
+
+```bash
+python3 -m py_compile swarm.py test.py
+uv run --script test.py
+```
+
+Update or add tests in `test.py` for behavior changes whenever practical.
+
+## Communication
+
+Use SwarmPy communication commands for status, handoff, objections, and approvals:
+
+```bash
+swarmpy notify <role-or-index> "message" -w development
+swarmpy log <role> "message" -w development
+```
+
+If working from a role worktree, the canonical project root is available as `$SWARMFORGE_PROJECT_DIR`.

@@ -8,3 +8,7 @@ __pycache__/
 
 # local runtime scratch
 .tmp/
+.swarmforge/
+.worktrees/
+logs/
+agent_context/
