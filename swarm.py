@@ -27,6 +27,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 SUPPORTED_AGENTS = {"claude", "codex", "none"}
+SHARED_WORKTREE_NAMES = frozenset({"none", "master"})
 
 RED = "\033[0;31m"
 GREEN = "\033[0;32m"
@@ -342,7 +343,7 @@ def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
             fail(f"Unknown config directive on line {line_no}: {keyword}")
         if role in roles:
             fail(f"Duplicate role '{role}' in {paths.config_file}")
-        if worktree_name not in {"none", "master"} and worktree_name in worktrees:
+        if worktree_name not in SHARED_WORKTREE_NAMES and worktree_name in worktrees:
             fail(f"Duplicate worktree '{worktree_name}' in {paths.config_file}")
         if "/" in worktree_name or worktree_name in {".", ".."}:
             fail(f"Invalid worktree '{worktree_name}' for role '{role}'")
@@ -352,7 +353,7 @@ def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
             fail(f"Missing role prompt {paths.swarmforge_dir / f'{role}.prompt'}")
 
         roles.add(role)
-        if worktree_name not in {"none", "master"}:
+        if worktree_name not in SHARED_WORKTREE_NAMES:
             worktrees.add(worktree_name)
             worktree_path = paths.worktrees_dir / worktree_name
         else:
@@ -381,11 +382,10 @@ def write_sessions_file(paths: ProjectPaths, configs: list[WindowConfig]) -> Non
     paths.sessions_file.write_text("\n".join(lines) + "\n")
 
 
-def apply_workflow_worktree(paths: ProjectPaths, configs: list[WindowConfig], worktree: str | None) -> list[WindowConfig]:
-    if not worktree:
+def apply_workflow_worktree(paths: ProjectPaths, configs: list[WindowConfig], worktree_name: str | None) -> list[WindowConfig]:
+    if not worktree_name:
         return configs
 
-    worktree_name = clean_name(worktree)
     worktree_path = paths.worktrees_dir / worktree_name
     return [
         replace(config, worktree_name=worktree_name, worktree_path=worktree_path)
@@ -411,7 +411,7 @@ def prepare_workspace(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
 
 def prepare_worktrees(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
     for config in configs:
-        if config.worktree_name in {"none", "master"}:
+        if config.worktree_name in SHARED_WORKTREE_NAMES:
             continue
         if (config.worktree_path / ".git").exists():
             continue
@@ -469,13 +469,11 @@ def start_pane_logging(paths: ProjectPaths, config: WindowConfig) -> None:
 
 
 def create_workflow_session(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
-    first = configs[0]
-    tmux("new-session", "-d", "-s", first.session, "-n", first.window)
-    tmux("set-window-option", "-t", f"{first.session}:{first.window}", "allow-rename", "off")
-    start_pane_logging(paths, first)
-
-    for config in configs[1:]:
-        tmux("new-window", "-t", config.session, "-n", config.window)
+    for i, config in enumerate(configs):
+        if i == 0:
+            tmux("new-session", "-d", "-s", config.session, "-n", config.window)
+        else:
+            tmux("new-window", "-t", config.session, "-n", config.window)
         tmux("set-window-option", "-t", f"{config.session}:{config.window}", "allow-rename", "off")
         start_pane_logging(paths, config)
 
@@ -578,7 +576,8 @@ def launch(working_dir_arg: str, workflow: str = "default", worktree: str | None
     check_dependency("git")
 
     initialize_git_repo(paths.working_dir)
-    configs = apply_workflow_worktree(paths, parse_config(paths), worktree)
+    worktree_name = clean_name(worktree) if worktree else None
+    configs = apply_workflow_worktree(paths, parse_config(paths), worktree_name)
     check_backend_dependencies(configs)
     prepare_workspace(paths, configs)
     prepare_worktrees(paths, configs)
@@ -602,8 +601,8 @@ def launch(working_dir_arg: str, workflow: str = "default", worktree: str | None
     print(f"Working directory: {paths.working_dir}")
     print(f"Project id: {paths.project_id}")
     print(f"Workflow: {paths.workflow}")
-    if worktree:
-        print(f"Workflow worktree: {paths.worktrees_dir / clean_name(worktree)}")
+    if worktree_name:
+        print(f"Workflow worktree: {paths.worktrees_dir / worktree_name}")
     print(f"Tmux session: {workflow_session}")
     print("Windows:")
     for config in configs:
@@ -696,42 +695,29 @@ def cmd_log(args: argparse.Namespace) -> None:
     print(f"[{args.role}] {message}")
 
 
-def print_last_lines(log_file: Path, count: int) -> None:
-    lines = log_file.read_text(errors="replace").splitlines()
-    for line in lines[-count:]:
-        print(line)
-
-
 def cmd_logs(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
 
-    if args.all_panes:
+    if args.all_panes or args.pane:
         rows = read_sessions(paths.sessions_file)
-        log_files = [pane_log_path(paths, row.role) for row in rows]
-    elif args.pane:
-        rows = read_sessions(paths.sessions_file)
-        target = resolve_target(rows, args.pane)
-        log_files = [pane_log_path(paths, target.role)]
+        targets = rows if args.all_panes else [resolve_target(rows, args.pane)]
+        log_files = [pane_log_path(paths, t.role) for t in targets]
     else:
         log_files = [paths.logs_dir / "agent_messages.log"]
-
-    for log_file in log_files:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        log_file.touch(exist_ok=True)
 
     if args.path:
         for log_file in log_files:
             print(log_file)
         return
 
-    if args.follow:
-        os.execvp("tail", ["tail", "-n", str(args.lines), "-f", *[str(path) for path in log_files]])
-
-    multiple = len(log_files) > 1
     for log_file in log_files:
-        if multiple:
-            print(f"==> {log_file} <==")
-        print_last_lines(log_file, args.lines)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_file.touch(exist_ok=True)
+
+    tail_cmd = ["tail", "-n", str(args.lines), *(["-f"] if args.follow else []), *[str(p) for p in log_files]]
+    if args.follow:
+        os.execvp("tail", tail_cmd)
+    subprocess.run(tail_cmd, check=False)
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
