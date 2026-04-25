@@ -543,6 +543,7 @@ def launch_role(paths: ProjectPaths, configs: list[WindowConfig], config: Window
         command = (
             f"{env_cmd} && cd {q(config.worktree_path)} && "
             f"codex -C {q(config.worktree_path)} "
+            f"--dangerously-bypass-approvals-and-sandbox "
             f'"$(cat {q(prompt_file)})"'
         )
     else:
