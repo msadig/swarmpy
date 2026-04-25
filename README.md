@@ -53,6 +53,42 @@ Without installing, you can still run:
 uv run --script swarm.py [COMMAND]
 ```
 
+## Install agent skill
+
+This repository includes a root `SKILL.md` for the open agent skills ecosystem.
+The `npx skills` CLI discovers root-level `SKILL.md` files and installs them into
+agent-specific skill directories such as `.claude/skills/<skill>/SKILL.md`,
+`.agents/skills/<skill>/SKILL.md`, or `.pi/skills/<skill>/SKILL.md` depending on
+the selected agent.
+
+Install it so coding agents understand SwarmPy's workflow layout, worktrees, logs,
+agent context, and coordination commands instead of relying on `--help` alone:
+
+```bash
+npx skills add https://github.com/msadig/swarmpy -g -y
+```
+
+Install for a specific agent, for example Claude Code or Pi:
+
+```bash
+npx skills add https://github.com/msadig/swarmpy -g -a claude-code -y
+npx skills add https://github.com/msadig/swarmpy -g -a pi -y
+```
+
+For a project-local install, omit `-g`:
+
+```bash
+npx skills add https://github.com/msadig/swarmpy -y
+```
+
+Manual Claude Code install shape:
+
+```text
+~/.claude/skills/swarmpy-workflows/SKILL.md
+```
+
+After publishing/refreshing the repo, it can be discovered from https://skills.sh/.
+
 ## Workflows
 
 A project can have many workflows. Each workflow has its own config, role prompts, settings, tmux session, tmux windows, worktrees, logs, and agent context.
