@@ -183,6 +183,108 @@ class SwarmPyTests(unittest.TestCase):
             self.assertEqual(result.stdout, "")
             self.assertIn("Sessions file not found:", result.stderr)
 
+    @unittest.skipIf(
+        any(shutil.which(name) is None for name in ("uv", "git", "tmux")),
+        "uv, git, and tmux must all be on PATH for the doctor happy-path test",
+    )
+    def test_doctor_json_reports_required_dependencies(self) -> None:
+        result = self.run_swarmpy("doctor", "--json")
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertIsNone(payload["project"])
+        self.assertIsNone(payload["workflow"])
+        self.assertEqual(
+            [dep["name"] for dep in payload["dependencies"]],
+            ["uv", "git", "tmux", "claude", "codex", "swarmpy"],
+        )
+        for name in ("uv", "git", "tmux"):
+            entry = next(d for d in payload["dependencies"] if d["name"] == name)
+            self.assertTrue(entry["required"])
+            self.assertTrue(entry["found"])
+            self.assertIsNotNone(entry["path"])
+        for name in ("claude", "codex", "swarmpy"):
+            entry = next(d for d in payload["dependencies"] if d["name"] == name)
+            self.assertFalse(entry["required"])
+            self.assertIn("path", entry)
+            self.assertIn("version", entry)
+
+    def test_doctor_json_marks_required_missing_when_path_empty(self) -> None:
+        env = test_env()
+        env["PATH"] = ""
+        result = subprocess.run(
+            [sys.executable, str(SWARM), "doctor", "--json"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(
+            [dep["name"] for dep in payload["dependencies"]],
+            ["uv", "git", "tmux", "claude", "codex", "swarmpy"],
+        )
+        for dep in payload["dependencies"]:
+            self.assertFalse(dep["found"])
+            self.assertIsNone(dep["path"])
+            self.assertIsNone(dep["version"])
+
+    def test_doctor_json_project_aware_marks_configured_agents_required(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect claude master\nwindow coder codex coder\n"
+            )
+
+            result = self.run_swarmpy("doctor", "--json", "-p", str(project), "-w", "ops", env=test_env())
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(payload["project"], str(project.resolve()))
+            self.assertEqual(payload["workflow"], "ops")
+            self.assertNotIn("error", payload)
+            entries = {dep["name"]: dep for dep in payload["dependencies"]}
+            self.assertTrue(entries["claude"]["required"])
+            self.assertTrue(entries["codex"]["required"])
+
+    def test_doctor_json_project_aware_tolerates_malformed_config_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text(
+                "# comment line, must be ignored\n"
+                "window architect claude master\n"
+                "not-a-window-directive\n"
+                "window coder codex\n"
+                "window reviewer codex reviewer\n"
+                "window weird unsupported-agent master\n"
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(SWARM), "doctor", "--json", "-p", str(project), "-w", "ops"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=test_env(),
+                check=False,
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertNotIn("error", payload)
+            self.assertEqual(payload["project"], str(project.resolve()))
+            self.assertEqual(payload["workflow"], "ops")
+            entries = {dep["name"]: dep for dep in payload["dependencies"]}
+            self.assertTrue(entries["claude"]["required"])
+            self.assertTrue(entries["codex"]["required"])
+
     def test_install_creates_global_swarmpy_symlink(self) -> None:
         if shutil.which("uv") is None:
             self.skipTest("uv is required to execute the installed shebang symlink")

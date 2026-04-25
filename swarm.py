@@ -803,6 +803,108 @@ def cmd_workflows(args: argparse.Namespace) -> None:
         print(f"  {name:<16} {path.relative_to(project_dir)}")
 
 
+DOCTOR_DEPENDENCIES: list[tuple[str, bool]] = [
+    ("uv", True),
+    ("git", True),
+    ("tmux", True),
+    ("claude", False),
+    ("codex", False),
+    ("swarmpy", False),
+]
+
+
+def _dep_version(name: str) -> str | None:
+    try:
+        result = subprocess.run(
+            [name, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    lines = result.stdout.strip().splitlines()
+    return lines[0] if lines else None
+
+
+def _doctor_required_overrides(config_file: Path) -> set[str]:
+    # Intentionally permissive: silently skip blanks, comments, malformed lines,
+    # unknown directives, and unsupported agent names. Strict validation belongs
+    # to parse_config and issue #3 (validate --json); do not "improve" this into
+    # hidden validation logic here.
+    overrides: set[str] = set()
+    try:
+        text = config_file.read_text()
+    except OSError:
+        return overrides
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) != 4 or fields[0] != "window":
+            continue
+        agent = fields[2].lower()
+        if agent in {"claude", "codex"}:
+            overrides.add(agent)
+    return overrides
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    project_aware = args.project is not None or args.workflow is not None
+    project_dir: Path | None = None
+    workflow_name: str | None = None
+    overrides: set[str] = set()
+    if project_aware:
+        project_dir = resolve_project_dir(args.project)
+        workflow_name = args.workflow or workflow_from_context()
+        paths = paths_for(project_dir, workflow_name)
+        overrides = _doctor_required_overrides(paths.config_file)
+
+    dependencies: list[dict] = []
+    ok = True
+    for name, base_required in DOCTOR_DEPENDENCIES:
+        required = base_required or (name in overrides)
+        path = shutil.which(name)
+        found = path is not None
+        version = _dep_version(name) if found else None
+        if required and not found:
+            ok = False
+        dependencies.append(
+            {
+                "name": name,
+                "required": required,
+                "found": found,
+                "path": path,
+                "version": version,
+            }
+        )
+
+    if args.json:
+        _emit_json(
+            {
+                "ok": ok,
+                "project": str(project_dir) if project_dir is not None else None,
+                "workflow": workflow_name,
+                "dependencies": dependencies,
+            }
+        )
+        if not ok:
+            raise SystemExit(1)
+        return
+
+    for dep in dependencies:
+        marker = "[FOUND]  " if dep["found"] else "[MISSING]"
+        tag = "required" if dep["required"] else "optional"
+        location = dep["path"] or "not on PATH"
+        version = f" ({dep['version']})" if dep["version"] else ""
+        print(f"{marker} {dep['name']:<8} {tag:<8} {location}{version}")
+
+
 def cmd_attach(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
     rows = read_sessions(paths.sessions_file)
@@ -918,6 +1020,11 @@ examples:
     add_workflow_arg(cleanup_parser)
     cleanup_parser.add_argument("sessions", nargs="*", help="session names; if omitted, read from the project sessions file")
 
+    doctor_parser = subparsers.add_parser("doctor", help="report local dependency and environment readiness")
+    add_project_arg(doctor_parser)
+    add_workflow_arg(doctor_parser)
+    doctor_parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
     return parser
 
 
@@ -930,7 +1037,7 @@ def main(argv: list[str] | None = None) -> None:
     if argv and argv[0] == "help":
         argv = ["--help"] if len(argv) == 1 else [argv[1], "--help"]
 
-    commands = {"install", "init", "launch", "notify", "log", "logs", "sessions", "workflows", "attach", "cleanup"}
+    commands = {"install", "init", "launch", "notify", "log", "logs", "sessions", "workflows", "attach", "cleanup", "doctor"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         argv = ["launch", *argv]
 
@@ -957,6 +1064,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_attach(args)
     elif args.command == "cleanup":
         cmd_cleanup(args)
+    elif args.command == "doctor":
+        cmd_doctor(args)
     else:
         parser.print_help()
 
