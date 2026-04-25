@@ -22,7 +22,25 @@ gh issue list --label "${GITHUB_TODO_LABEL:-todo}" --state open --json number,ti
 If needed, inspect individual issues in more detail:
 
 ```bash
-gh issue view <number> --json number,title,labels,body,comments,url
+gh issue view <number> --json number,title,labels,body,comments,url,state
+```
+
+Before selecting an issue, verify it is eligible:
+
+- issue state is open
+- issue still has the todo label
+- no related open PR exists
+
+Check for open PRs that mention or close the candidate issue before selecting it:
+
+```bash
+gh pr list --state open --search "#<issue-number>" --json number,title,url,state,headRefName,baseRefName
+```
+
+If this returns a related PR, skip the issue because it is already done or in progress. If the search result is ambiguous, inspect the PR body/diff before deciding:
+
+```bash
+gh pr view <pr-number> --json number,title,body,url,state,headRefName,baseRefName
 ```
 
 Choose the next task based on:
@@ -47,6 +65,7 @@ agent_context/development/sprint-plan.md
 The plan must include:
 
 - selected issue(s), links, and why they are next
+- eligibility check: issue is open, has the todo label, and has no related open PR
 - priority/blocker analysis
 - problem statement
 - proposed simple solution

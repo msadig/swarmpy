@@ -41,9 +41,17 @@ Do not edit generated/runtime paths:
 
 A sprint starts with issue/task intake. The responsible planning role selects the next task by considering priority, blockers, dependencies, user impact, implementation risk, testability, and fit with SwarmPy's architecture.
 
+A task is eligible for a new sprint only if all of these are true:
+
+- the issue is still open
+- the issue has the workflow's todo label, normally `todo`
+- the issue does not already have a related open pull request
+
+A related open pull request means the issue is already implemented or actively in progress. Do not start a new sprint for that issue. Pick another eligible issue, or ask the user if no eligible issue exists.
+
 ### 2. Written plan before implementation
 
-Before implementation, there must be a markdown plan in the shared sprint context. The plan should define the problem, selected task, proposed solution, rejected alternatives, likely files to change, testing strategy, risks, rollback considerations, and acceptance criteria.
+Before implementation, there must be a markdown plan in the shared sprint context. The plan should define the problem, selected task, eligibility check, proposed solution, rejected alternatives, likely files to change, testing strategy, risks, rollback considerations, and acceptance criteria.
 
 ### 3. Consensus before coding
 
