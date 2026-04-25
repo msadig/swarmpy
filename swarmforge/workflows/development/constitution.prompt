@@ -73,6 +73,14 @@ Implementation must be verified before final review. Add or update regression te
 
 Final review compares the agreed plan with the implemented behavior and tests. If anything is wrong, request precise changes and repeat implementation/testing/review rounds until the result is clean and accepted.
 
+### 7. PR and cleanup gate
+
+A sprint is not complete until the work has a pull request or the user explicitly says no PR is needed. Before cleanup, the final shared context should include the PR URL, final test status, final review status, and any follow-up issues.
+
+Only the architect should trigger workflow cleanup. Cleanup should happen after the reviewer has approved the final implementation, the PR is created or confirmed, and the architect has logged a final handoff summary.
+
+Cleanup kills the tmux workflow session. It does not delete source files, logs, agent context, or worktrees.
+
 ## Quality checks
 
 For code changes, the default required checks are:

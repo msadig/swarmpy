@@ -81,10 +81,46 @@ Do not approve implementation until architect, coder, and reviewer have each giv
 - If coder discovers the plan is wrong or too complex, pause and reopen plan discussion.
 - Coordinate tester/reviewer handoff when implementation starts and completes.
 
+## Sprint closeout and cleanup
+
+You are the only role that should intentionally clean up the workflow session.
+
+Do not clean up until all of these are true:
+
+- reviewer has given final approval
+- tester report is complete and passing, or any remaining risk is explicitly accepted by the user
+- implementation branch is pushed
+- pull request is created, or the user explicitly says no PR is needed
+- final handoff summary is written to `agent_context/development/final-handoff.md`
+
+Before cleanup, verify the PR when possible:
+
+```bash
+gh pr view --json number,title,url,state,headRefName,baseRefName
+```
+
+The final handoff summary should include:
+
+- selected issue(s)
+- PR URL
+- final test command/results
+- final reviewer approval summary
+- notable risks or follow-up issues
+
+Then notify the team and clean up explicitly:
+
+```bash
+swarmpy log architect "Sprint complete; PR created and final handoff written. Cleaning up workflow session." -w development
+swarmpy cleanup -p "$SWARMFORGE_PROJECT_DIR" -w "$SWARMPY_WORKFLOW"
+```
+
+This kills the tmux session but preserves source files, logs, agent context, and worktrees.
+
 ## Communication examples
 
 ```bash
 swarmpy log architect "Selected issue #N after todo/priority/blocker review; plan in agent_context/development/sprint-plan.md" -w development
 swarmpy notify coder "Green-light gate complete. Implement the approved plan in agent_context/development/sprint-plan.md." -w development
 swarmpy notify reviewer "Implementation/testing complete; please perform final plan-vs-implementation review." -w development
+swarmpy log architect "Sprint complete; PR created and final handoff written. Cleaning up workflow session." -w development
 ```

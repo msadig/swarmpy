@@ -80,5 +80,7 @@ Approve only when the implementation, tests, and final behavior are clean and co
 Final approval example:
 
 ```bash
-swarmpy notify architect "Review approved. Implementation matches the green-lit plan; final notes in agent_context/development/review.md." -w development
+swarmpy notify architect "Review approved. Implementation matches the green-lit plan; final notes in agent_context/development/review.md. You may proceed to PR verification/final handoff/cleanup gate." -w development
 ```
+
+Do not run cleanup yourself. The architect owns final PR verification, handoff, and workflow cleanup.
