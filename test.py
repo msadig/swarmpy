@@ -93,7 +93,7 @@ class SwarmPyTests(unittest.TestCase):
             self.assertEqual(len(payload["workflows"]), 1)
             self.assertEqual(payload["workflows"][0]["name"], "default")
             self.assertEqual(payload["workflows"][0]["path"], str(swarmforge_dir.resolve()))
-            self.assertEqual(payload["workflows"][0]["configFile"], str((swarmforge_dir / "swarmforge.conf").resolve()))
+            self.assertEqual(payload["workflows"][0]["config_file"], str((swarmforge_dir / "swarmforge.conf").resolve()))
 
     def test_workflows_json_order_matches_human_output(self) -> None:
         with tempfile.TemporaryDirectory() as td:

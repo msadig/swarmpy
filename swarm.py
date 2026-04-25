@@ -91,6 +91,10 @@ def fail(message: str, code: int = 1) -> None:
     raise SystemExit(code)
 
 
+def _emit_json(payload: dict) -> None:
+    print(json.dumps(payload, indent=2))
+
+
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True, stdout=None, stderr=None) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=check, stdout=stdout, stderr=stderr, text=True)
 
@@ -725,42 +729,34 @@ def cmd_sessions(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
     if args.json:
         if not paths.sessions_file.is_file():
-            print(
-                json.dumps(
-                    {
-                        "project": str(paths.working_dir),
-                        "workflow": paths.workflow,
-                        "sessions": [],
-                        "error": f"Sessions file not found: {paths.sessions_file}",
-                    },
-                    indent=2,
-                    sort_keys=False,
-                )
-            )
-            raise SystemExit(1)
-        rows = read_sessions(paths.sessions_file)
-        print(
-            json.dumps(
+            _emit_json(
                 {
                     "project": str(paths.working_dir),
                     "workflow": paths.workflow,
-                    "sessions": [
-                        {
-                            "index": row.index,
-                            "role": row.role,
-                            "session": row.session,
-                            "window": row.window,
-                            "target": row.target,
-                            "display": row.display,
-                            "agent": row.agent,
-                            "running": tmux_has_session(row.session),
-                        }
-                        for row in rows
-                    ],
-                },
-                indent=2,
-                sort_keys=False,
+                    "sessions": [],
+                    "error": f"Sessions file not found: {paths.sessions_file}",
+                }
             )
+            raise SystemExit(1)
+        rows = read_sessions(paths.sessions_file)
+        _emit_json(
+            {
+                "project": str(paths.working_dir),
+                "workflow": paths.workflow,
+                "sessions": [
+                    {
+                        "index": row.index,
+                        "role": row.role,
+                        "session": row.session,
+                        "window": row.window,
+                        "target": row.target,
+                        "display": row.display,
+                        "agent": row.agent,
+                        "running": tmux_has_session(row.session),
+                    }
+                    for row in rows
+                ],
+            }
         )
         return
     rows = read_sessions(paths.sessions_file)
@@ -783,22 +779,18 @@ def cmd_workflows(args: argparse.Namespace) -> None:
                 workflows.append((child.name, child))
 
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "project": str(project_dir),
-                    "workflows": [
-                        {
-                            "name": name,
-                            "path": str(path),
-                            "configFile": str(path / "swarmforge.conf"),
-                        }
-                        for name, path in workflows
-                    ],
-                },
-                indent=2,
-                sort_keys=False,
-            )
+        _emit_json(
+            {
+                "project": str(project_dir),
+                "workflows": [
+                    {
+                        "name": name,
+                        "path": str(path),
+                        "config_file": str(path / "swarmforge.conf"),
+                    }
+                    for name, path in workflows
+                ],
+            }
         )
         return
 
