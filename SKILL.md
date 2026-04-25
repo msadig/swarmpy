@@ -250,13 +250,20 @@ List workflows in a project:
 
 ```bash
 swarmpy workflows -p "$PROJECT"
+swarmpy workflows -p "$PROJECT" --json
 ```
 
 List configured sessions/windows and running status:
 
 ```bash
 swarmpy sessions -p "$PROJECT" -w "$WORKFLOW"
+swarmpy sessions -p "$PROJECT" -w "$WORKFLOW" --json
 ```
+
+`--json` is the agent-friendly form — it emits a stable schema on stdout for both commands:
+
+- `workflows --json` → `{ "project", "workflows": [{ "name", "path", "config_file" }] }`. Exits 0 even when empty.
+- `sessions --json` → `{ "project", "workflow", "sessions": [{ "index", "role", "session", "window", "target", "display", "agent", "running" }] }`. If `sessions.tsv` is missing, the same JSON shape is printed with an extra `error` field and the process exits 1 — branch on `error`, not on stderr.
 
 Attach to a role window:
 
