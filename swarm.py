@@ -17,6 +17,7 @@ Agent helper commands:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
@@ -88,6 +89,10 @@ def q(value: str | Path) -> str:
 def fail(message: str, code: int = 1) -> None:
     print(f"{RED}Error:{RESET} {message}", file=sys.stderr)
     raise SystemExit(code)
+
+
+def _emit_json(payload: dict) -> None:
+    print(json.dumps(payload, indent=2))
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True, stdout=None, stderr=None) -> subprocess.CompletedProcess:
@@ -722,6 +727,38 @@ def cmd_logs(args: argparse.Namespace) -> None:
 
 def cmd_sessions(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
+    if args.json:
+        if not paths.sessions_file.is_file():
+            _emit_json(
+                {
+                    "project": str(paths.working_dir),
+                    "workflow": paths.workflow,
+                    "sessions": [],
+                    "error": f"Sessions file not found: {paths.sessions_file}",
+                }
+            )
+            raise SystemExit(1)
+        rows = read_sessions(paths.sessions_file)
+        _emit_json(
+            {
+                "project": str(paths.working_dir),
+                "workflow": paths.workflow,
+                "sessions": [
+                    {
+                        "index": row.index,
+                        "role": row.role,
+                        "session": row.session,
+                        "window": row.window,
+                        "target": row.target,
+                        "display": row.display,
+                        "agent": row.agent,
+                        "running": tmux_has_session(row.session),
+                    }
+                    for row in rows
+                ],
+            }
+        )
+        return
     rows = read_sessions(paths.sessions_file)
     print(f"Swarm sessions for {paths.working_dir} [{paths.workflow}]:")
     for row in rows:
@@ -740,6 +777,22 @@ def cmd_workflows(args: argparse.Namespace) -> None:
         for child in sorted(workflows_dir.iterdir()):
             if child.is_dir() and (child / "swarmforge.conf").is_file():
                 workflows.append((child.name, child))
+
+    if args.json:
+        _emit_json(
+            {
+                "project": str(project_dir),
+                "workflows": [
+                    {
+                        "name": name,
+                        "path": str(path),
+                        "config_file": str(path / "swarmforge.conf"),
+                    }
+                    for name, path in workflows
+                ],
+            }
+        )
+        return
 
     if not workflows:
         print(f"No workflows found in {project_dir}. Create one with: swarmpy init {project_dir} -w development")
@@ -849,9 +902,11 @@ examples:
     sessions_parser = subparsers.add_parser("sessions", help="list configured sessions and running status")
     add_project_arg(sessions_parser)
     add_workflow_arg(sessions_parser)
+    sessions_parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     workflows_parser = subparsers.add_parser("workflows", help="list workflows configured in a project")
     add_project_arg(workflows_parser)
+    workflows_parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     attach_parser = subparsers.add_parser("attach", help="attach to a workflow session and select a role window")
     add_project_arg(attach_parser)

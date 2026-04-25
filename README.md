@@ -154,7 +154,10 @@ List workflows:
 
 ```bash
 swarmpy workflows -p /path/to/project
+swarmpy workflows -p /path/to/project --json
 ```
+
+`--json` emits `{ "project": "...", "workflows": [{ "name", "path", "config_file" }, ...] }` and exits 0 even when the list is empty.
 
 Launch one workflow:
 
@@ -297,7 +300,10 @@ List sessions:
 
 ```bash
 swarmpy sessions -p /path/to/project -w development
+swarmpy sessions -p /path/to/project -w development --json
 ```
+
+`--json` emits `{ "project", "workflow", "sessions": [{ "index", "role", "session", "window", "target", "display", "agent", "running" }, ...] }`. If `sessions.tsv` is missing, JSON is printed to stdout with an `error` field and the process exits 1.
 
 Attach to a role:
 

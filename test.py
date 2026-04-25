@@ -8,6 +8,7 @@ Run:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -72,6 +73,115 @@ class SwarmPyTests(unittest.TestCase):
             result = self.run_swarmpy("workflows", "-p", str(project))
             self.assertIn("development", result.stdout)
             self.assertIn("content", result.stdout)
+
+    def test_workflows_json_empty_project(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            result = self.run_swarmpy("workflows", "--json", "-p", str(project))
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload, {"project": str(project.resolve()), "workflows": []})
+
+    def test_workflows_json_includes_default_first(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            swarmforge_dir = project / "swarmforge"
+            swarmforge_dir.mkdir(parents=True)
+            (swarmforge_dir / "swarmforge.conf").write_text("window logger none none\n")
+
+            result = self.run_swarmpy("workflows", "--json", "-p", str(project))
+            payload = json.loads(result.stdout)
+            self.assertEqual(len(payload["workflows"]), 1)
+            self.assertEqual(payload["workflows"][0]["name"], "default")
+            self.assertEqual(payload["workflows"][0]["path"], str(swarmforge_dir.resolve()))
+            self.assertEqual(payload["workflows"][0]["config_file"], str((swarmforge_dir / "swarmforge.conf").resolve()))
+
+    def test_workflows_json_order_matches_human_output(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            swarmforge_dir = project / "swarmforge"
+            swarmforge_dir.mkdir(parents=True)
+            (swarmforge_dir / "swarmforge.conf").write_text("window logger none none\n")
+            self.run_swarmpy("init", str(project), "-w", "development")
+            self.run_swarmpy("init", str(project), "-w", "content")
+
+            human = self.run_swarmpy("workflows", "-p", str(project))
+            human_names = [line.split()[0] for line in human.stdout.splitlines()[1:]]
+
+            machine = self.run_swarmpy("workflows", "--json", "-p", str(project))
+            payload = json.loads(machine.stdout)
+            json_names = [workflow["name"] for workflow in payload["workflows"]]
+
+            self.assertEqual(human_names, json_names)
+
+    def test_sessions_json_returns_machine_readable_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            sessions_file = project / ".swarmforge" / "ops" / "sessions.tsv"
+            sessions_file.parent.mkdir(parents=True)
+            sessions_file.write_text("1\tarchitect\tswarmpy-test-ops\tarchitect\tArchitect\tclaude\n")
+
+            result = self.run_swarmpy("sessions", "--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(payload["project"], str(project.resolve()))
+            self.assertEqual(payload["workflow"], "ops")
+            self.assertEqual(len(payload["sessions"]), 1)
+            self.assertEqual(
+                payload["sessions"][0],
+                {
+                    "index": "1",
+                    "role": "architect",
+                    "session": "swarmpy-test-ops",
+                    "window": "architect",
+                    "target": "swarmpy-test-ops:architect",
+                    "display": "Architect",
+                    "agent": "claude",
+                    "running": False,
+                },
+            )
+
+    def test_sessions_json_missing_file_returns_structured_error(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            result = subprocess.run(
+                [sys.executable, str(SWARM), "sessions", "--json", "-p", str(project), "-w", "ops"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=test_env(),
+                check=False,
+            )
+
+            payload = json.loads(result.stdout)
+            expected_sessions_file = (project.resolve() / ".swarmforge" / "ops" / "sessions.tsv").resolve()
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(payload["project"], str(project.resolve()))
+            self.assertEqual(payload["workflow"], "ops")
+            self.assertEqual(payload["sessions"], [])
+            self.assertEqual(payload["error"], f"Sessions file not found: {expected_sessions_file}")
+            self.assertEqual(result.stderr, "")
+
+    def test_sessions_without_json_missing_file_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            result = subprocess.run(
+                [sys.executable, str(SWARM), "sessions", "-p", str(project), "-w", "ops"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=test_env(),
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout, "")
+            self.assertIn("Sessions file not found:", result.stderr)
 
     def test_install_creates_global_swarmpy_symlink(self) -> None:
         if shutil.which("uv") is None:
