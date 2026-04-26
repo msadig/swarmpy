@@ -326,7 +326,10 @@ class SwarmPyTests(unittest.TestCase):
                 self.assertFalse(role["running"])
                 self.assertEqual(role["target"], f"{session}:{role['window']}")
                 self.assertEqual(role["pane_log"], str((project / "logs" / "ops" / "panes" / f"{role['role']}.log").resolve()))
-                self.assertEqual(role["prompt_file"], str((workflow_dir / f"{role['role']}.prompt").resolve()))
+                if role["role"] == "logger":
+                    self.assertIsNone(role["prompt_file"])
+                else:
+                    self.assertEqual(role["prompt_file"], str((workflow_dir / f"{role['role']}.prompt").resolve()))
 
             self.assertEqual(payload["message_log"], str((project / "logs" / "ops" / "agent_messages.log").resolve()))
 

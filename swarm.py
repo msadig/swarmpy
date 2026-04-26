@@ -913,7 +913,7 @@ def _inspect_running(session: str) -> bool:
     # payload on machines where tmux has not yet been installed.
     try:
         return tmux_has_session(session)
-    except (OSError, FileNotFoundError):
+    except OSError:
         return False
 
 
@@ -964,7 +964,11 @@ def cmd_inspect(args: argparse.Namespace) -> None:
             "window": config.window,
             "target": f"{session}:{config.window}",
             "running": running,
-            "prompt_file": str(paths.swarmforge_dir / f"{config.role}.prompt"),
+            "prompt_file": (
+                None
+                if config.agent == "none"
+                else str(paths.swarmforge_dir / f"{config.role}.prompt")
+            ),
             "pane_log": str(pane_log_path(paths, config.role)),
         }
         for config in configs
