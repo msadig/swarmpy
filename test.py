@@ -285,6 +285,148 @@ class SwarmPyTests(unittest.TestCase):
             self.assertTrue(entries["claude"]["required"])
             self.assertTrue(entries["codex"]["required"])
 
+    def test_inspect_json_returns_workflow_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect claude master\n"
+                "window coder codex coder\n"
+                "window reviewer codex reviewer\n"
+                "window logger none none\n"
+            )
+            (workflow_dir / "coder.prompt").write_text("coder\n")
+            (workflow_dir / "reviewer.prompt").write_text("reviewer\n")
+
+            result = self.run_swarmpy("inspect", "--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            project_id = project.name.lower()
+            session = f"swarmpy-{project_id}-ops"
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["project"], {"id": project_id, "path": str(project.resolve())})
+            workflow_keys = payload["workflow"]
+            self.assertEqual(workflow_keys["name"], "ops")
+            self.assertEqual(workflow_keys["session"], session)
+            self.assertFalse(workflow_keys["running"])
+            self.assertEqual(workflow_keys["config_file"], str((workflow_dir / "swarmforge.conf").resolve()))
+            self.assertEqual(workflow_keys["settings_file"], str((workflow_dir / "settings.env").resolve()))
+            self.assertEqual(workflow_keys["constitution_file"], str((workflow_dir / "constitution.prompt").resolve()))
+            self.assertEqual(workflow_keys["state_dir"], str((project / ".swarmforge" / "ops").resolve()))
+            self.assertEqual(workflow_keys["logs_dir"], str((project / "logs" / "ops").resolve()))
+
+            self.assertEqual([role["role"] for role in payload["roles"]], ["architect", "coder", "reviewer", "logger"])
+            for role in payload["roles"]:
+                self.assertEqual(
+                    list(role.keys()),
+                    ["index", "role", "agent", "worktree", "worktree_path", "window", "target", "running", "prompt_file", "pane_log"],
+                )
+                self.assertFalse(role["running"])
+                self.assertEqual(role["target"], f"{session}:{role['window']}")
+                self.assertEqual(role["pane_log"], str((project / "logs" / "ops" / "panes" / f"{role['role']}.log").resolve()))
+                if role["role"] == "logger":
+                    self.assertIsNone(role["prompt_file"])
+                else:
+                    self.assertEqual(role["prompt_file"], str((workflow_dir / f"{role['role']}.prompt").resolve()))
+
+            self.assertEqual(payload["message_log"], str((project / "logs" / "ops" / "agent_messages.log").resolve()))
+
+    def test_inspect_json_missing_config_returns_structured_error(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").unlink()
+
+            result = subprocess.run(
+                [sys.executable, str(SWARM), "inspect", "--json", "-p", str(project), "-w", "ops"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=test_env(),
+                check=False,
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stderr, "")
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["project"]["id"], project.name.lower())
+            self.assertEqual(payload["workflow"]["name"], "ops")
+            self.assertEqual(payload["workflow"]["session"], f"swarmpy-{project.name.lower()}-ops")
+            self.assertNotIn("running", payload["workflow"])
+            self.assertNotIn("roles", payload)
+            self.assertNotIn("message_log", payload)
+            self.assertIn(str((workflow_dir / "swarmforge.conf").resolve()), payload["error"])
+
+    def test_inspect_json_missing_constitution_returns_structured_error(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "constitution.prompt").unlink()
+
+            result = subprocess.run(
+                [sys.executable, str(SWARM), "inspect", "--json", "-p", str(project), "-w", "ops"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=test_env(),
+                check=False,
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stderr, "")
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["project"]["id"], project.name.lower())
+            self.assertEqual(payload["workflow"]["name"], "ops")
+            self.assertEqual(payload["workflow"]["session"], f"swarmpy-{project.name.lower()}-ops")
+            self.assertNotIn("running", payload["workflow"])
+            self.assertNotIn("roles", payload)
+            self.assertNotIn("message_log", payload)
+            self.assertIn(str((workflow_dir / "constitution.prompt").resolve()), payload["error"])
+
+    def test_inspect_json_running_false_when_tmux_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            env = test_env()
+            env["PATH"] = ""
+            result = subprocess.run(
+                [sys.executable, str(SWARM), "inspect", "--json", "-p", str(project), "-w", "ops"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                check=False,
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stderr, "")
+            self.assertTrue(payload["ok"])
+            self.assertFalse(payload["workflow"]["running"])
+            for role in payload["roles"]:
+                self.assertFalse(role["running"])
+
+    def test_inspect_human_default_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            result = self.run_swarmpy("inspect", "-p", str(project), "-w", "ops")
+            self.assertIn(str(project.resolve()), result.stdout)
+            self.assertIn("[ops]", result.stdout)
+            self.assertIn(f"swarmpy-{project.name.lower()}-ops", result.stdout)
+            for role in ("architect", "coder", "reviewer", "logger"):
+                self.assertIn(role, result.stdout)
+
     def test_install_creates_global_swarmpy_symlink(self) -> None:
         if shutil.which("uv") is None:
             self.skipTest("uv is required to execute the installed shebang symlink")
