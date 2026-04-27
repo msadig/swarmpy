@@ -260,6 +260,7 @@ init       create workflow config and role prompt scaffolding
 launch     start the configured workflow
 workflows  list workflows configured in a project
 sessions   list configured sessions and running status
+validate   validate workflow config without launching
 notify     send a message to a role, index, or tmux target
 log        append a message to logs/<workflow>/agent_messages.log
 logs       show or follow logs/<workflow>/agent_messages.log
@@ -370,6 +371,17 @@ Cleanup explicit sessions:
 ```bash
 swarmpy cleanup swarmpy-myproject-development
 ```
+
+## Validate
+
+Pre-launch config check (read-only, does not start tmux):
+
+```bash
+swarmpy validate -p /path/to/project -w development
+swarmpy validate -p /path/to/project -w development --json
+```
+
+JSON shape: `{ "ok", "project", "workflow", "errors": [{ "code", "message", "path", "line" }, ...], "warnings": [...] }`. `ok: true` and exit 0 on success (warnings do not fail); `ok: false` and exit 1 when `errors` is non-empty.
 
 ## Tests
 

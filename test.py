@@ -427,6 +427,373 @@ class SwarmPyTests(unittest.TestCase):
             for role in ("architect", "coder", "reviewer", "logger"):
                 self.assertIn(role, result.stdout)
 
+    # ------------------------------------------------------------------
+    # validate --json (#3)
+    # ------------------------------------------------------------------
+
+    def _pinned_path_dir(self, parent: Path) -> Path:
+        """Build a directory of symlinks to only uv/tmux/git (no claude/codex).
+
+        On systems where /opt/homebrew/bin contains git, tmux, AND codex, simply
+        adding the parent dir to PATH would still expose codex. Symlinking each
+        tool individually into a fresh directory isolates the pin so claude /
+        codex are deterministically missing — mirrors the doctor PATH=""
+        precedent for env-controlled warning assertions.
+        """
+        bindir = parent / "_pinned_bin"
+        bindir.mkdir()
+        for tool in ("uv", "tmux", "git"):
+            src = shutil.which(tool)
+            if src is not None:
+                (bindir / tool).symlink_to(src)
+        return bindir
+
+    def _run_validate(
+        self,
+        *args: str,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SWARM), "validate", *args],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env or test_env(),
+            check=False,
+        )
+
+    def test_validate_ok_on_default_init(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "development")
+
+            env = test_env()
+            env["PATH"] = str(self._pinned_path_dir(project))
+            result = self._run_validate("--json", "-p", str(project), "-w", "development", env=env)
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["errors"], [])
+            self.assertEqual(payload["project"], str(project.resolve()))
+            self.assertEqual(payload["workflow"], "development")
+            # Default init configures architect=claude, coder=codex, reviewer=codex.
+            # With PATH pinned to only uv/tmux/git, exactly two unique missing
+            # backends → exactly two warnings, both backend_not_installed.
+            self.assertEqual(len(payload["warnings"]), 2)
+            warning_codes = sorted(w["code"] for w in payload["warnings"])
+            self.assertEqual(warning_codes, ["backend_not_installed", "backend_not_installed"])
+            warning_agents = sorted(
+                w["message"].split("'")[1] for w in payload["warnings"]
+            )
+            self.assertEqual(warning_agents, ["claude", "codex"])
+
+    def test_validate_human_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "development")
+
+            env = test_env()
+            result = self._run_validate("-p", str(project), "-w", "development", env=env)
+            self.assertEqual(result.returncode, 0)
+            # When all backends are present (typical dev box) the human path
+            # prints "OK". When some backend is missing, the header and warning
+            # lines are still emitted; either way the workflow header line lands
+            # on stdout. Assert the header invariance.
+            self.assertIn("Workflow: development", result.stdout)
+
+    def test_validate_missing_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(len(payload["errors"]), 1)
+            self.assertEqual(payload["errors"][0]["code"], "missing_config")
+
+    def test_validate_missing_constitution(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "constitution.prompt").unlink()
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(payload["ok"])
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("missing_constitution", codes)
+
+    def test_validate_missing_role_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "coder.prompt").unlink()
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(payload["ok"])
+            missing = [e for e in payload["errors"] if e["code"] == "missing_role_prompt"]
+            self.assertEqual(len(missing), 1)
+            self.assertTrue(missing[0]["path"].endswith("coder.prompt"))
+            self.assertIsInstance(missing[0]["line"], int)
+
+    def test_validate_duplicate_role(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect claude master\n"
+                "window architect claude master\n"
+            )
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("duplicate_role", codes)
+
+    def test_validate_duplicate_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "coder.prompt").write_text("coder\n")
+            (workflow_dir / "reviewer.prompt").write_text("reviewer\n")
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window coder codex shared\n"
+                "window reviewer codex shared\n"
+            )
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("duplicate_worktree", codes)
+
+    def test_validate_invalid_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect claude foo/bar\n"
+            )
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("invalid_worktree", codes)
+
+    def test_validate_invalid_line(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect claude\n"  # 3 fields, not 4
+            )
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("invalid_line", codes)
+            self.assertNotIn("empty_config", codes)
+
+    def test_validate_unsupported_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect gpt5 master\n"
+            )
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("unsupported_agent", codes)
+            self.assertNotIn("empty_config", codes)
+
+    def test_validate_collects_multiple_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            # Delete coder.prompt so the third line triggers missing_role_prompt
+            # alongside the duplicate_role on line 2.
+            (workflow_dir / "coder.prompt").unlink()
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect claude master\n"
+                "window architect claude master\n"
+                "window coder codex coder\n"
+            )
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertGreaterEqual(len(payload["errors"]), 2)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("duplicate_role", codes)
+            self.assertIn("missing_role_prompt", codes)
+
+    def test_validate_does_not_mutate_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            for marker in (".swarmforge/ops/sessions.tsv", ".worktrees", "logs/ops/agent_messages.log"):
+                self.assertFalse((project / marker).exists(), f"pre-validate: {marker} should not exist")
+
+            self._run_validate("--json", "-p", str(project), "-w", "ops")
+
+            # validate must not create any of these runtime artifacts.
+            self.assertFalse((project / ".swarmforge" / "ops" / "sessions.tsv").exists())
+            self.assertFalse((project / ".worktrees").exists())
+            self.assertFalse((project / "logs" / "ops" / "agent_messages.log").exists())
+
+    def test_validate_does_not_require_tmux(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            env = test_env()
+            env["PATH"] = ""  # drop tmux (and everything else)
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops", env=env)
+            payload = json.loads(result.stdout)
+
+            # Default init has no errors, so ok: true even with PATH empty.
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(payload["ok"])
+
+    def test_parse_config_still_fails_on_first_error(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            # Three distinct errors at three distinct line numbers:
+            # line 1: invalid_line (3 fields)
+            # line 2: duplicate_role (architect appears again)
+            # line 3: unsupported_agent
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect claude\n"
+                "window architect claude master\n"
+                "window coder gpt5 coder\n"
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(SWARM), "launch", str(project), "-w", "ops"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=test_env(),
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Invalid config line 1: window architect claude", result.stderr)
+            self.assertNotIn("Duplicate role", result.stderr)
+            self.assertNotIn("Unsupported agent", result.stderr)
+
+    def test_validate_empty_config_only_for_truly_empty_file(self) -> None:
+        # (a) truly empty (only comments and blanks) → empty_config
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text("# only a comment\n\n# blank above\n")
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertEqual(codes, ["empty_config"])
+
+        # (b) one well-formed line whose role prompt is missing → missing_role_prompt
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "coder.prompt").unlink()
+            (workflow_dir / "swarmforge.conf").write_text("window coder codex coder\n")
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("missing_role_prompt", codes)
+            self.assertNotIn("empty_config", codes)
+
+        # (c) one malformed line → invalid_line (no empty_config companion)
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text("window architect claude\n")
+
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 1)
+            codes = [e["code"] for e in payload["errors"]]
+            self.assertIn("invalid_line", codes)
+            self.assertNotIn("empty_config", codes)
+
+    def test_validate_warning_does_not_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "development")
+
+            env = test_env()
+            env["PATH"] = str(self._pinned_path_dir(project))
+            result = self._run_validate("--json", "-p", str(project), "-w", "development", env=env)
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["errors"], [])
+            self.assertGreaterEqual(len(payload["warnings"]), 1)
+
+    def test_validate_emits_backend_not_installed_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text("window architect claude master\n")
+
+            env = test_env()
+            env["PATH"] = ""
+            result = self._run_validate("--json", "-p", str(project), "-w", "ops", env=env)
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(len(payload["warnings"]), 1)
+            warning = payload["warnings"][0]
+            self.assertEqual(warning["code"], "backend_not_installed")
+            self.assertIsNone(warning["path"])
+            self.assertIsNone(warning["line"])
+            self.assertIn("claude", warning["message"])
+
     def test_install_creates_global_swarmpy_symlink(self) -> None:
         if shutil.which("uv") is None:
             self.skipTest("uv is required to execute the installed shebang symlink")
