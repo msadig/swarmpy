@@ -27,7 +27,8 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-SUPPORTED_AGENTS = {"claude", "codex", "opencode", "pi", "none"}
+SUPPORTED_AGENTS = ("claude", "codex", "opencode", "pi", "none")
+BACKEND_AGENTS = tuple(agent for agent in SUPPORTED_AGENTS if agent != "none")
 SHARED_WORKTREE_NAMES = frozenset({"none", "master"})
 
 RED = "\033[0;31m"
@@ -440,7 +441,7 @@ def prepare_worktrees(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
 
 def check_backend_dependencies(configs: list[WindowConfig]) -> None:
     for config in configs:
-        if config.agent in {"claude", "codex", "opencode", "pi"}:
+        if config.agent in BACKEND_AGENTS:
             check_dependency(config.agent)
 
 
@@ -510,6 +511,39 @@ def base_environment_command(paths: ProjectPaths) -> str:
     )
 
 
+def build_agent_command(paths: ProjectPaths, config: WindowConfig, prompt_file: Path) -> str:
+    env_cmd = base_environment_command(paths)
+
+    if config.agent == "claude":
+        return (
+            f"{env_cmd} && cd {q(config.worktree_path)} && "
+            f"claude --append-system-prompt-file {q(prompt_file)} "
+            f"--dangerously-skip-permissions -n {q('SwarmForge ' + config.display)} "
+            f'"$(cat {q(prompt_file)})"'
+        )
+    if config.agent == "codex":
+        return (
+            f"{env_cmd} && cd {q(config.worktree_path)} && "
+            f"codex -C {q(config.worktree_path)} "
+            f"--dangerously-bypass-approvals-and-sandbox "
+            f'"$(cat {q(prompt_file)})"'
+        )
+    if config.agent == "opencode":
+        return (
+            f"{env_cmd} && cd {q(config.worktree_path)} && "
+            f"OPENCODE_PERMISSION=\"${{OPENCODE_PERMISSION:-\\\"allow\\\"}}\" "
+            f"opencode {q(config.worktree_path)} "
+            f"--prompt \"$(cat {q(prompt_file)})\""
+        )
+    if config.agent == "pi":
+        return (
+            f"{env_cmd} && cd {q(config.worktree_path)} && "
+            f"pi "
+            f'"$(cat {q(prompt_file)})"'
+        )
+    fail(f"Unsupported agent '{config.agent}' for role '{config.role}'")
+
+
 def choose_cleanup_owner(configs: list[WindowConfig]) -> int | None:
     for config in configs:
         if config.role == "architect" and config.agent != "none":
@@ -533,36 +567,7 @@ def launch_role(paths: ProjectPaths, configs: list[WindowConfig], config: Window
         return
 
     prompt_file = write_agent_instruction_file(paths, config.role)
-    env_cmd = base_environment_command(paths)
-
-    if config.agent == "claude":
-        command = (
-            f"{env_cmd} && cd {q(config.worktree_path)} && "
-            f"claude --append-system-prompt-file {q(prompt_file)} "
-            f"--dangerously-skip-permissions -n {q('SwarmForge ' + config.display)} "
-            f'"$(cat {q(prompt_file)})"'
-        )
-    elif config.agent == "codex":
-        command = (
-            f"{env_cmd} && cd {q(config.worktree_path)} && "
-            f"codex -C {q(config.worktree_path)} "
-            f"--dangerously-bypass-approvals-and-sandbox "
-            f'"$(cat {q(prompt_file)})"'
-        )
-    elif config.agent == "opencode":
-        command = (
-            f"{env_cmd} && cd {q(config.worktree_path)} && "
-            f"opencode run --dangerously-skip-permissions "
-            f'"$(cat {q(prompt_file)})"'
-        )
-    elif config.agent == "pi":
-        command = (
-            f"{env_cmd} && cd {q(config.worktree_path)} && "
-            f"pi "
-            f'"$(cat {q(prompt_file)})"'
-        )
-    else:
-        fail(f"Unsupported agent '{config.agent}' for role '{config.role}'")
+    command = build_agent_command(paths, config, prompt_file)
 
     if cleanup_owner == config.index:
         cleanup_cmd = f"{script_command(paths)} cleanup " + q(config.session)
@@ -819,10 +824,7 @@ DOCTOR_DEPENDENCIES: list[tuple[str, bool]] = [
     ("uv", True),
     ("git", True),
     ("tmux", True),
-    ("claude", False),
-    ("codex", False),
-    ("opencode", False),
-    ("pi", False),
+    *[(agent, False) for agent in BACKEND_AGENTS],
     ("swarmpy", False),
 ]
 
@@ -863,7 +865,7 @@ def _doctor_required_overrides(config_file: Path) -> set[str]:
         if len(fields) != 4 or fields[0] != "window":
             continue
         agent = fields[2].lower()
-        if agent in {"claude", "codex", "opencode", "pi"}:
+        if agent in BACKEND_AGENTS:
             overrides.add(agent)
     return overrides
 

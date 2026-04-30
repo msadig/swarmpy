@@ -19,7 +19,7 @@ The goal is intentionally boring:
 - `uv`
 - `tmux`
 - `git`
-- optional agent CLIs depending on config: `claude`, `codex`
+- optional agent CLIs depending on config: `claude`, `codex`, `opencode`, `pi`
 
 ## Install global CLI
 
@@ -215,6 +215,8 @@ Agents:
 
 - `claude`
 - `codex`
+- `opencode`
+- `pi`
 - `none`
 
 Worktree behavior:

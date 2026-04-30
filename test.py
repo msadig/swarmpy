@@ -18,6 +18,8 @@ import time
 import unittest
 from pathlib import Path
 
+import swarm as swarmpy_module
+
 ROOT = Path(__file__).resolve().parent
 SWARM = ROOT / "swarm.py"
 
@@ -196,14 +198,14 @@ class SwarmPyTests(unittest.TestCase):
         self.assertIsNone(payload["workflow"])
         self.assertEqual(
             [dep["name"] for dep in payload["dependencies"]],
-            ["uv", "git", "tmux", "claude", "codex", "swarmpy"],
+            ["uv", "git", "tmux", "claude", "codex", "opencode", "pi", "swarmpy"],
         )
         for name in ("uv", "git", "tmux"):
             entry = next(d for d in payload["dependencies"] if d["name"] == name)
             self.assertTrue(entry["required"])
             self.assertTrue(entry["found"])
             self.assertIsNotNone(entry["path"])
-        for name in ("claude", "codex", "swarmpy"):
+        for name in ("claude", "codex", "opencode", "pi", "swarmpy"):
             entry = next(d for d in payload["dependencies"] if d["name"] == name)
             self.assertFalse(entry["required"])
             self.assertIn("path", entry)
@@ -226,7 +228,7 @@ class SwarmPyTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(
             [dep["name"] for dep in payload["dependencies"]],
-            ["uv", "git", "tmux", "claude", "codex", "swarmpy"],
+            ["uv", "git", "tmux", "claude", "codex", "opencode", "pi", "swarmpy"],
         )
         for dep in payload["dependencies"]:
             self.assertFalse(dep["found"])
@@ -252,6 +254,50 @@ class SwarmPyTests(unittest.TestCase):
             entries = {dep["name"]: dep for dep in payload["dependencies"]}
             self.assertTrue(entries["claude"]["required"])
             self.assertTrue(entries["codex"]["required"])
+
+    def test_doctor_json_project_aware_marks_opencode_required(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            workflow_dir = project / "swarmforge" / "workflows" / "ops"
+            (workflow_dir / "swarmforge.conf").write_text(
+                "window architect opencode master\nwindow coder pi coder\n"
+            )
+
+            result = self.run_swarmpy("doctor", "--json", "-p", str(project), "-w", "ops", env=test_env())
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(payload["project"], str(project.resolve()))
+            self.assertEqual(payload["workflow"], "ops")
+            entries = {dep["name"]: dep for dep in payload["dependencies"]}
+            self.assertTrue(entries["opencode"]["required"])
+            self.assertTrue(entries["pi"]["required"])
+
+    def test_opencode_launch_uses_interactive_tui(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            self.run_swarmpy("init", str(project), "-w", "ops")
+
+            paths = swarmpy_module.paths_for(project, "ops")
+            config = swarmpy_module.WindowConfig(
+                index=1,
+                role="architect",
+                agent="opencode",
+                worktree_name="master",
+                session="swarmpy-test-ops",
+                window="architect",
+                display="Architect",
+                worktree_path=project.resolve(),
+            )
+
+            paths.prompts_dir.mkdir(parents=True)
+            prompt_file = swarmpy_module.write_agent_instruction_file(paths, "architect")
+            command = swarmpy_module.build_agent_command(paths, config, prompt_file)
+
+            self.assertIn("opencode ", command)
+            self.assertIn("--prompt", command)
+            self.assertNotIn("opencode run", command)
 
     def test_doctor_json_project_aware_tolerates_malformed_config_lines(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -74,7 +74,7 @@ Do not assume the current shell directory is the project that should receive a s
 
 - `PROJECT`: absolute path to the user’s target repository or workspace
 - `WORKFLOW`: named workflow, usually `development`, `content`, `research`, `review`, or `default`
-- desired roles and backends (`claude`, `codex`, or `none`)
+- desired roles and backends (`claude`, `codex`, `opencode`, `pi`, or `none`)
 - whether roles should share the main checkout, get separate worktrees, or share one workflow worktree
 
 Use absolute paths in examples and commands when there is any ambiguity.
@@ -94,6 +94,8 @@ Agent backends are required only for configured roles:
 ```bash
 command -v claude   # needed for `window <role> claude <worktree>`
 command -v codex    # needed for `window <role> codex <worktree>`
+command -v opencode # needed for `window <role> opencode <worktree>`
+command -v pi       # needed for `window <role> pi <worktree>`
 ```
 
 If the global command is not installed, either install it:
@@ -147,6 +149,8 @@ Supported agents:
 
 - `claude` — launches Claude Code in the role’s working directory
 - `codex` — launches Codex in the role’s working directory
+- `opencode` — launches OpenCode TUI in the role’s working directory
+- `pi` — launches Pi in the role’s working directory
 - `none` — opens a tmux window without an agent backend; useful for `logger` or manual panes
 
 Worktree field semantics:
@@ -387,11 +391,11 @@ swarmpy launch "$PROJECT" -w "$WORKFLOW"
 
 ### `Unsupported agent`
 
-Only `claude`, `codex`, and `none` are currently valid in `swarmforge.conf`.
+Only `claude`, `codex`, `opencode`, `pi`, and `none` are currently valid in `swarmforge.conf`.
 
 ### Backend not installed
 
-If a configured role uses `claude` or `codex`, that executable must be on `PATH` before launch. Change the role to `none` for a manual window or install the backend.
+If a configured role uses `claude`, `codex`, `opencode`, or `pi`, that executable must be on `PATH` before launch. Change the role to `none` for a manual window or install the backend.
 
 ### Tmux session stale or wrong
 
