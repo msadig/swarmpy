@@ -29,6 +29,10 @@ from pathlib import Path
 
 SUPPORTED_AGENTS = ("claude", "codex", "opencode", "pi", "none")
 BACKEND_AGENTS = tuple(agent for agent in SUPPORTED_AGENTS if agent != "none")
+OPENCODE_DEFAULT_PERMISSION = json.dumps(
+    {"*": "allow", "read": {"*": "allow", "*.env": "allow", "*.env.*": "allow"}},
+    separators=(",", ":"),
+)
 SHARED_WORKTREE_NAMES = frozenset({"none", "master"})
 
 RED = "\033[0;31m"
@@ -490,7 +494,7 @@ def write_agent_instruction_file(paths: ProjectPaths, role: str) -> Path:
         f"This agent is running in SwarmPy workflow: {paths.workflow}\n"
         f"Read {paths.constitution_file.relative_to(paths.working_dir)}, then read every file it refers to recursively, and obey all of those instructions.\n"
         f"Read {Path(paths.swarmforge_dir.name) / f'{role}.prompt' if paths.workflow == 'default' else paths.swarmforge_dir.relative_to(paths.working_dir) / f'{role}.prompt'}, then read every file it refers to recursively, and follow all of those instructions.\n"
-        f"Workflow settings are in {paths.settings_file.relative_to(paths.working_dir)}.\n"
+        "Workflow settings have already been sourced into this process environment; do not read settings.env unless the user explicitly asks.\n"
         f"Workflow logs are in {paths.logs_dir.relative_to(paths.working_dir)}.\n"
         f"Workflow context is in {paths.context_dir.relative_to(paths.working_dir)}.\n"
         f"To notify another role, run: {command_for_agents(paths)} notify <role-or-index> '<message>' -w {paths.workflow}\n"
@@ -531,7 +535,7 @@ def build_agent_command(paths: ProjectPaths, config: WindowConfig, prompt_file: 
     if config.agent == "opencode":
         return (
             f"{env_cmd} && cd {q(config.worktree_path)} && "
-            f"OPENCODE_PERMISSION=\"${{OPENCODE_PERMISSION:-\\\"allow\\\"}}\" "
+            f"if [ -z \"${{OPENCODE_PERMISSION+x}}\" ]; then export OPENCODE_PERMISSION={q(OPENCODE_DEFAULT_PERMISSION)}; fi; "
             f"opencode {q(config.worktree_path)} "
             f"--prompt \"$(cat {q(prompt_file)})\""
         )

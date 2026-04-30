@@ -293,9 +293,14 @@ class SwarmPyTests(unittest.TestCase):
 
             paths.prompts_dir.mkdir(parents=True)
             prompt_file = swarmpy_module.write_agent_instruction_file(paths, "architect")
+            prompt_text = prompt_file.read_text()
             command = swarmpy_module.build_agent_command(paths, config, prompt_file)
 
+            self.assertIn("Workflow settings have already been sourced", prompt_text)
+            self.assertNotIn("Workflow settings are in", prompt_text)
             self.assertIn("opencode ", command)
+            self.assertIn("OPENCODE_PERMISSION=", command)
+            self.assertIn('"*.env":"allow"', command)
             self.assertIn("--prompt", command)
             self.assertNotIn("opencode run", command)
 
