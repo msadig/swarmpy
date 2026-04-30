@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-SUPPORTED_AGENTS = {"claude", "codex", "opencode", "none"}
+SUPPORTED_AGENTS = {"claude", "codex", "opencode", "pi", "none"}
 SHARED_WORKTREE_NAMES = frozenset({"none", "master"})
 
 RED = "\033[0;31m"
@@ -230,7 +230,7 @@ def init_project(working_dir_arg: str, workflow: str = "default", force: bool = 
     files = {
         paths.config_file: f"""# SwarmPy workflow config: {paths.workflow}
 # Format: window <role> <agent> <worktree>
-# Agents: claude, codex, opencode, none
+# Agents: claude, codex, opencode, pi, none
 # Worktree: master runs in the main checkout; none creates no worktree; any other name creates .worktrees/{paths.workflow}/<name>.
 window architect claude master
 window coder codex coder
@@ -440,7 +440,7 @@ def prepare_worktrees(paths: ProjectPaths, configs: list[WindowConfig]) -> None:
 
 def check_backend_dependencies(configs: list[WindowConfig]) -> None:
     for config in configs:
-        if config.agent in {"claude", "codex", "opencode"}:
+        if config.agent in {"claude", "codex", "opencode", "pi"}:
             check_dependency(config.agent)
 
 
@@ -553,6 +553,12 @@ def launch_role(paths: ProjectPaths, configs: list[WindowConfig], config: Window
         command = (
             f"{env_cmd} && cd {q(config.worktree_path)} && "
             f"opencode run --dangerously-skip-permissions "
+            f'"$(cat {q(prompt_file)})"'
+        )
+    elif config.agent == "pi":
+        command = (
+            f"{env_cmd} && cd {q(config.worktree_path)} && "
+            f"pi "
             f'"$(cat {q(prompt_file)})"'
         )
     else:
@@ -816,6 +822,7 @@ DOCTOR_DEPENDENCIES: list[tuple[str, bool]] = [
     ("claude", False),
     ("codex", False),
     ("opencode", False),
+    ("pi", False),
     ("swarmpy", False),
 ]
 
@@ -856,7 +863,7 @@ def _doctor_required_overrides(config_file: Path) -> set[str]:
         if len(fields) != 4 or fields[0] != "window":
             continue
         agent = fields[2].lower()
-        if agent in {"claude", "codex", "opencode"}:
+        if agent in {"claude", "codex", "opencode", "pi"}:
             overrides.add(agent)
     return overrides
 
