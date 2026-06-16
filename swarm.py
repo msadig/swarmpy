@@ -56,6 +56,14 @@ class WindowConfig:
 
 
 @dataclass(frozen=True)
+class ConfigIssue:
+    code: str
+    message: str
+    path: str | None
+    line: int | None
+
+
+@dataclass(frozen=True)
 class SessionRow:
     index: str
     role: str
@@ -327,15 +335,33 @@ def session_name_for_workflow(project_id: str, workflow: str) -> str:
     return f"swarmpy-{project_id}-{workflow}"
 
 
-def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
-    if not paths.config_file.is_file():
-        fail(f"Config not found at {paths.config_file}")
-    if not paths.constitution_file.is_file():
-        fail(f"Constitution prompt not found at {paths.constitution_file}")
+def collect_config_issues(paths: ProjectPaths) -> tuple[list[WindowConfig], list[ConfigIssue]]:
+    """Walk the workflow config, collecting all issues without exiting.
 
+    Used by validate (collect-all) and parse_config (fail-on-first wrapper).
+    """
+    issues: list[ConfigIssue] = []
     configs: list[WindowConfig] = []
     roles: set[str] = set()
     worktrees: set[str] = set()
+
+    if not paths.config_file.is_file():
+        issues.append(ConfigIssue(
+            "missing_config",
+            f"Config not found at {paths.config_file}",
+            str(paths.config_file),
+            None,
+        ))
+        return configs, issues
+
+    if not paths.constitution_file.is_file():
+        issues.append(ConfigIssue(
+            "missing_constitution",
+            f"Constitution prompt not found at {paths.constitution_file}",
+            str(paths.constitution_file),
+            None,
+        ))
+        # do not return — keep walking the config to surface every issue at once
 
     for line_no, raw in enumerate(paths.config_file.read_text().splitlines(), start=1):
         line = raw.strip()
@@ -344,24 +370,36 @@ def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
 
         fields = line.split()
         if len(fields) != 4:
-            fail(f"Invalid config line {line_no}: {line}")
+            issues.append(ConfigIssue("invalid_line", f"Invalid config line {line_no}: {line}", str(paths.config_file), line_no))
+            continue
 
         keyword, role, agent, worktree_name = fields
         agent = agent.lower()
 
+        line_ok = True
         if keyword != "window":
-            fail(f"Unknown config directive on line {line_no}: {keyword}")
+            issues.append(ConfigIssue("unknown_directive", f"Unknown config directive on line {line_no}: {keyword}", str(paths.config_file), line_no))
+            line_ok = False
         if role in roles:
-            fail(f"Duplicate role '{role}' in {paths.config_file}")
+            issues.append(ConfigIssue("duplicate_role", f"Duplicate role '{role}' in {paths.config_file}", str(paths.config_file), line_no))
+            line_ok = False
         if worktree_name not in SHARED_WORKTREE_NAMES and worktree_name in worktrees:
-            fail(f"Duplicate worktree '{worktree_name}' in {paths.config_file}")
+            issues.append(ConfigIssue("duplicate_worktree", f"Duplicate worktree '{worktree_name}' in {paths.config_file}", str(paths.config_file), line_no))
+            line_ok = False
         if "/" in worktree_name or worktree_name in {".", ".."}:
-            fail(f"Invalid worktree '{worktree_name}' for role '{role}'")
+            issues.append(ConfigIssue("invalid_worktree", f"Invalid worktree '{worktree_name}' for role '{role}'", str(paths.config_file), line_no))
+            line_ok = False
         if agent not in SUPPORTED_AGENTS:
-            fail(f"Unsupported agent '{agent}' for role '{role}'")
-        if agent != "none" and not (paths.swarmforge_dir / f"{role}.prompt").is_file():
-            fail(f"Missing role prompt {paths.swarmforge_dir / f'{role}.prompt'}")
+            issues.append(ConfigIssue("unsupported_agent", f"Unsupported agent '{agent}' for role '{role}'", str(paths.config_file), line_no))
+            line_ok = False
+        prompt_path = paths.swarmforge_dir / f"{role}.prompt"
+        if agent != "none" and not prompt_path.is_file():
+            issues.append(ConfigIssue("missing_role_prompt", f"Missing role prompt {prompt_path}", str(prompt_path), line_no))
+            line_ok = False
 
+        # Always reserve the role/worktree name even when other fields on this
+        # line failed validation — surfaces a duplicate-of-a-bad-line as a
+        # duplicate rather than collapsing two bad lines into one.
         roles.add(role)
         if worktree_name not in SHARED_WORKTREE_NAMES:
             worktrees.add(worktree_name)
@@ -369,21 +407,37 @@ def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
         else:
             worktree_path = paths.working_dir
 
-        configs.append(
-            WindowConfig(
-                index=len(configs) + 1,
-                role=role,
-                agent=agent,
-                worktree_name=worktree_name,
-                session=session_name_for_workflow(paths.project_id, paths.workflow),
-                window=role,
-                display=display_name_for_role(role),
-                worktree_path=worktree_path,
+        if line_ok:
+            configs.append(
+                WindowConfig(
+                    index=len(configs) + 1,
+                    role=role,
+                    agent=agent,
+                    worktree_name=worktree_name,
+                    session=session_name_for_workflow(paths.project_id, paths.workflow),
+                    window=role,
+                    display=display_name_for_role(role),
+                    worktree_path=worktree_path,
+                )
             )
-        )
 
-    if not configs:
-        fail(f"No windows defined in {paths.config_file}")
+    # Emit empty_config only when the file truly has no non-comment config lines.
+    # If any other issue was collected, those already explain why no fully-valid
+    # configs exist; appending empty_config alongside them would be misleading.
+    has_any_config_line = any(
+        bool(line.strip()) and not line.strip().startswith("#")
+        for line in paths.config_file.read_text().splitlines()
+    )
+    if not configs and not issues and not has_any_config_line:
+        issues.append(ConfigIssue("empty_config", f"No windows defined in {paths.config_file}", str(paths.config_file), None))
+
+    return configs, issues
+
+
+def parse_config(paths: ProjectPaths) -> list[WindowConfig]:
+    configs, issues = collect_config_issues(paths)
+    if issues:
+        fail(issues[0].message)  # preserve byte-identical first-error semantics for launch
     return configs
 
 
@@ -1023,6 +1077,62 @@ def cmd_inspect(args: argparse.Namespace) -> None:
         print(f"  {role['index']}. {role['role']:<14} {role['agent']:<6} {worktree_col:<48} {role['target']} ({running_label})")
 
 
+def cmd_validate(args: argparse.Namespace) -> None:
+    paths = resolve_project_paths(args.project, args.workflow)
+    configs, issues = collect_config_issues(paths)
+
+    # Optional backend availability — warnings, not errors. Only check unique
+    # agent backends that appear on validated lines, so a malformed unsupported
+    # agent does not also produce a misleading backend_not_installed warning.
+    warnings: list[ConfigIssue] = []
+    seen_backends: set[str] = set()
+    for cfg in configs:
+        if cfg.agent in {"claude", "codex"} and cfg.agent not in seen_backends:
+            seen_backends.add(cfg.agent)
+            if shutil.which(cfg.agent) is None:
+                warnings.append(ConfigIssue(
+                    "backend_not_installed",
+                    f"Configured agent '{cfg.agent}' is not on PATH",
+                    None,
+                    None,
+                ))
+
+    ok = not issues
+
+    if args.json:
+        _emit_json({
+            "ok": ok,
+            "project": str(paths.working_dir),
+            "workflow": paths.workflow,
+            "errors": [
+                {"code": i.code, "message": i.message, "path": i.path, "line": i.line}
+                for i in issues
+            ],
+            "warnings": [
+                {"code": w.code, "message": w.message, "path": w.path, "line": w.line}
+                for w in warnings
+            ],
+        })
+        if not ok:
+            raise SystemExit(1)
+        return
+
+    # Non-JSON path — minimal human summary, plain text. Header and OK on
+    # stdout; errors and warnings on stderr. Matches cmd_doctor / cmd_inspect
+    # discipline so machine consumers branch on --json.
+    print(f"Workflow: {paths.workflow}  Project: {paths.working_dir}")
+    if ok and not warnings:
+        print("OK")
+        return
+    for issue in issues:
+        loc = f" (line {issue.line})" if issue.line else ""
+        print(f"error [{issue.code}] {issue.message}{loc}", file=sys.stderr)
+    for w in warnings:
+        print(f"warning [{w.code}] {w.message}", file=sys.stderr)
+    if not ok:
+        raise SystemExit(1)
+
+
 def cmd_attach(args: argparse.Namespace) -> None:
     paths = resolve_project_paths(args.project, args.workflow)
     rows = read_sessions(paths.sessions_file)
@@ -1148,6 +1258,11 @@ examples:
     add_workflow_arg(inspect_parser)
     inspect_parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
+    validate_parser = subparsers.add_parser("validate", help="validate workflow config without launching")
+    add_project_arg(validate_parser)
+    add_workflow_arg(validate_parser)
+    validate_parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
     return parser
 
 
@@ -1160,7 +1275,7 @@ def main(argv: list[str] | None = None) -> None:
     if argv and argv[0] == "help":
         argv = ["--help"] if len(argv) == 1 else [argv[1], "--help"]
 
-    commands = {"install", "init", "launch", "notify", "log", "logs", "sessions", "workflows", "attach", "cleanup", "doctor", "inspect"}
+    commands = {"install", "init", "launch", "notify", "log", "logs", "sessions", "workflows", "attach", "cleanup", "doctor", "inspect", "validate"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         argv = ["launch", *argv]
 
@@ -1191,6 +1306,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_doctor(args)
     elif args.command == "inspect":
         cmd_inspect(args)
+    elif args.command == "validate":
+        cmd_validate(args)
     else:
         parser.print_help()
 
